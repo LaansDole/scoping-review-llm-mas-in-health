@@ -4,9 +4,12 @@ import { PAPERS_PART2 } from './data_part2';
 
 export * from './types';
 
+const addDefaults = (papers: Omit<Paper, 'reviewStatus'>[]): Paper[] =>
+  papers.map(p => ({ ...p, reviewStatus: 'unreviewed' as const }));
+
 export const PAPERS: Paper[] = [
-  ...PAPERS_PART1,
-  ...PAPERS_PART2
+  ...addDefaults(PAPERS_PART1),
+  ...addDefaults(PAPERS_PART2),
 ];
 
 export const THEMES = [

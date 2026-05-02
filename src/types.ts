@@ -1,3 +1,5 @@
+export type ReviewStatus = "included" | "excluded" | "unreviewed";
+
 export interface Paper {
   id: string;
   title: string;
@@ -10,4 +12,7 @@ export interface Paper {
   keyFindings: string[];
   systemArchitecture?: string;
   comparisonWithSingleLLM?: string;
+  reviewStatus: ReviewStatus;
+  covidenceId?: string;
+  notes?: string;
 }

@@ -1,6 +1,8 @@
 import { Paper } from './types';
 
-export const PAPERS_PART2: Paper[] = [
+type PaperInit = Omit<Paper, 'reviewStatus'>;
+
+export const PAPERS_PART2: PaperInit[] = [
   {
     id: "wang-2026-epidemic",
     title: "An LLM-Driven Multi-Agent Simulation Framework for Coupled Epidemic-Economic Dynamics.",

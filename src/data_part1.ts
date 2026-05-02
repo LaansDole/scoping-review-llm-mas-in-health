@@ -1,6 +1,8 @@
 import { Paper } from './types';
 
-export const PAPERS_PART1: Paper[] = [
+type PaperInit = Omit<Paper, 'reviewStatus'>;
+
+export const PAPERS_PART1: PaperInit[] = [
   {
     id: "zhou-2025",
     title: "A collaborative large language model for drug analysis.",
