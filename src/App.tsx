@@ -15,6 +15,7 @@ import {
   Info,
   Layers,
   ClipboardList,
+  Pencil,
   Upload,
   X,
   Plus,
@@ -59,6 +60,8 @@ export default function App() {
   const [pendingExclusionId, setPendingExclusionId] = useState<string | null>(null);
   const [selectedReasons, setSelectedReasons] = useState<Set<string>>(new Set());
   const [customReason, setCustomReason] = useState("");
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -95,6 +98,32 @@ export default function App() {
     setPapers(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     setSelectedPaper(prev => prev && prev.id === id ? { ...prev, ...updates } : prev);
   }, []);
+
+  const startEdit = useCallback((field: string, value: string) => {
+    setEditingField(field);
+    setEditValue(value);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingField(null);
+    setEditValue("");
+  }, []);
+
+  const saveEdit = useCallback(() => {
+    if (!editingField || !selectedPaper) return;
+    const updates: Partial<Paper> = {};
+    if (editingField === 'authors') {
+      updates.authors = editValue.split(',').map(a => a.trim()).filter(Boolean);
+    } else if (editingField === 'year') {
+      const n = parseInt(editValue);
+      if (!isNaN(n)) updates.year = n;
+    } else {
+      (updates as Record<string, string>)[editingField] = editValue;
+    }
+    updatePaper(selectedPaper.id, updates);
+    setEditingField(null);
+    setEditValue("");
+  }, [editingField, editValue, selectedPaper, updatePaper]);
 
   const openExclusionDialog = useCallback((paperId: string) => {
     setPendingExclusionId(paperId);
@@ -456,7 +485,22 @@ export default function App() {
                         Executive Summary
                       </h4>
                       <p className="text-slate-600 leading-relaxed text-lg">
-                        {selectedPaper.abstract}
+                        {editingField === 'abstract' ? (
+                          <textarea
+                            value={editValue}
+                            onChange={e => setEditValue(e.target.value)}
+                            onBlur={saveEdit}
+                            onKeyDown={e => { if (e.key === 'Escape') cancelEdit(); }}
+                            autoFocus
+                            rows={6}
+                            className="w-full text-lg leading-relaxed bg-white border border-indigo-300 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
+                          />
+                        ) : (
+                          <div className="flex gap-2">
+                            <span className="flex-1">{selectedPaper.abstract}</span>
+                            <button onClick={() => startEdit('abstract', selectedPaper.abstract)} className="shrink-0 p-1 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors self-start"><Pencil className="w-4 h-4" /></button>
+                          </div>
+                        )}
                       </p>
                     </div>
 
@@ -484,18 +528,61 @@ export default function App() {
                       <div className="space-y-4">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-400 uppercase">Journal</label>
-                          <span className="text-sm font-semibold text-slate-900">{selectedPaper.journal}</span>
+                          {editingField === 'journal' ? (
+                            <input value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }} autoFocus className="w-full text-sm bg-white border border-indigo-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500" />
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-semibold text-slate-900">{selectedPaper.journal}</span>
+                              <button onClick={() => startEdit('journal', selectedPaper.journal)} className="shrink-0 p-0.5 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"><Pencil className="w-3 h-3" /></button>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase">Year</label>
+                          {editingField === 'year' ? (
+                            <input value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }} autoFocus className="w-full text-sm bg-white border border-indigo-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500" />
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-semibold text-slate-900">{selectedPaper.year}</span>
+                              <button onClick={() => startEdit('year', String(selectedPaper.year))} className="shrink-0 p-0.5 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"><Pencil className="w-3 h-3" /></button>
+                            </div>
+                          )}
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-slate-400 uppercase">Authors</label>
-                          <span className="text-xs text-slate-600 line-clamp-3">{selectedPaper.authors.join(", ")}</span>
+                          {editingField === 'authors' ? (
+                            <input value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }} autoFocus className="w-full text-xs bg-white border border-indigo-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500" />
+                          ) : (
+                            <div className="flex items-start gap-1.5">
+                              <span className="text-xs text-slate-600 line-clamp-3">{selectedPaper.authors.join(', ')}</span>
+                              <button onClick={() => startEdit('authors', selectedPaper.authors.join(', '))} className="shrink-0 p-0.5 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"><Pencil className="w-3 h-3" /></button>
+                            </div>
+                          )}
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-slate-400 uppercase">DOI</label>
-                          <a href={`https://doi.org/${selectedPaper.doi}`} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:underline flex items-center gap-1">
-                            {selectedPaper.doi}
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
+                          {editingField === 'doi' ? (
+                            <input value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }} autoFocus className="w-full text-xs bg-white border border-indigo-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500" />
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <a href={`https://doi.org/${selectedPaper.doi}`} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 hover:underline inline-flex items-center gap-1">
+                                {selectedPaper.doi}
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                              <button onClick={() => startEdit('doi', selectedPaper.doi)} className="shrink-0 p-0.5 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"><Pencil className="w-3 h-3" /></button>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-400 uppercase">Notes</label>
+                          {editingField === 'notes' ? (
+                            <textarea value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={saveEdit} onKeyDown={e => { if (e.key === 'Escape') cancelEdit(); }} autoFocus rows={3} className="w-full text-xs bg-white border border-indigo-300 rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500 resize-y" />
+                          ) : (
+                            <div className="flex items-start gap-1.5">
+                              <span className="text-xs text-slate-600">{selectedPaper.notes || <em className="text-slate-300">Add notes...</em>}</span>
+                              <button onClick={() => startEdit('notes', selectedPaper.notes || '')} className="shrink-0 p-0.5 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"><Pencil className="w-3 h-3" /></button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
