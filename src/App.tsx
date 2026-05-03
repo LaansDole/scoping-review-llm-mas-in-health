@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
@@ -26,18 +26,48 @@ import { PAPERS as INITIAL_PAPERS, THEMES as INITIAL_THEMES, Paper } from './dat
 import type { ReviewStatus } from './types';
 import { parseCsvFile } from './csvParser';
 
+const STORAGE_KEYS = { papers: 'mas-health-papers', themes: 'mas-health-themes' } as const;
+
+function loadPapers(): Paper[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.papers);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return INITIAL_PAPERS;
+}
+
+function loadThemes(): string[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.themes);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return [...INITIAL_THEMES];
+}
+
 export default function App() {
-  const [papers, setPapers] = useState<Paper[]>(INITIAL_PAPERS);
-  const [themes, setThemes] = useState<string[]>([...INITIAL_THEMES]);
+  const [papers, setPapers] = useState<Paper[]>(loadPapers);
+  const [themes, setThemes] = useState<string[]>(loadThemes);
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
-  const [statusFilter, setStatusFilter] = useState<ReviewStatus | 'all'>('all');
+  const [viewMode, setViewMode] = useState<'all' | 'review'>('all');
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<ReviewStatus>('unreviewed');
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [newThemeInput, setNewThemeInput] = useState("");
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
   const [newThemeOpen, setNewThemeOpen] = useState(false);
+  const [pendingExclusionId, setPendingExclusionId] = useState<string | null>(null);
+  const [selectedReasons, setSelectedReasons] = useState<Set<string>>(new Set());
+  const [customReason, setCustomReason] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.papers, JSON.stringify(papers));
+  }, [papers]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.themes, JSON.stringify(themes));
+  }, [themes]);
 
   // CSV import handler
   const handleCsvImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -58,16 +88,56 @@ export default function App() {
     setTimeout(() => setImportMsg(null), 5000);
   }, [papers, themes]);
 
+  const EXCLUSION_REASONS = ['Not LLM-based MAS', 'Duplicate paper', 'Full text unavailable', 'Not primary research'] as const;
+
   // Paper mutation helpers
   const updatePaper = useCallback((id: string, updates: Partial<Paper>) => {
     setPapers(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     setSelectedPaper(prev => prev && prev.id === id ? { ...prev, ...updates } : prev);
   }, []);
 
+  const openExclusionDialog = useCallback((paperId: string) => {
+    setPendingExclusionId(paperId);
+    setSelectedReasons(new Set());
+    setCustomReason("");
+  }, []);
+
+  const cancelExclusion = useCallback(() => {
+    setPendingExclusionId(null);
+    setSelectedReasons(new Set());
+    setCustomReason("");
+  }, []);
+
+  const confirmExclusion = useCallback(() => {
+    if (!pendingExclusionId) return;
+    const parts = [...selectedReasons];
+    if (customReason.trim()) parts.push(customReason.trim());
+    if (parts.length === 0) return;
+    const reason = parts.join('; ');
+    updatePaper(pendingExclusionId, { reviewStatus: 'excluded', themes: [], exclusionReason: reason });
+    setViewMode('all');
+    setSelectedTheme(null);
+    setPendingExclusionId(null);
+    setSelectedReasons(new Set());
+    setCustomReason("");
+  }, [pendingExclusionId, selectedReasons, customReason, updatePaper]);
+
+  const toggleReason = useCallback((reason: string) => {
+    setSelectedReasons(prev => {
+      const next = new Set(prev);
+      if (next.has(reason)) next.delete(reason); else next.add(reason);
+      return next;
+    });
+  }, []);
+
   const cycleStatus = useCallback((id: string, current: ReviewStatus) => {
     const next: ReviewStatus = current === 'unreviewed' ? 'included' : current === 'included' ? 'excluded' : 'unreviewed';
+    if (next === 'excluded') {
+      openExclusionDialog(id);
+      return;
+    }
     updatePaper(id, { reviewStatus: next });
-  }, [updatePaper]);
+  }, [updatePaper, openExclusionDialog]);
 
   const removeThemeFromPaper = useCallback((paperId: string, theme: string) => {
     setPapers(prev => prev.map(p => p.id === paperId ? { ...p, themes: p.themes.filter(t => t !== theme) } : p));
@@ -93,14 +163,16 @@ export default function App() {
 
   const filteredPapers = useMemo(() => {
     return papers.filter(paper => {
-      const matchesTheme = !selectedTheme || paper.themes.includes(selectedTheme);
       const matchesSearch = paper.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                            paper.abstract.toLowerCase().includes(searchQuery.toLowerCase()) ||
                            paper.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase()));
-      const matchesStatus = statusFilter === 'all' || paper.reviewStatus === statusFilter;
-      return matchesTheme && matchesSearch && matchesStatus;
+      if (viewMode === 'all') {
+        const matchesTheme = !selectedTheme || paper.themes.includes(selectedTheme);
+        return matchesTheme && matchesSearch;
+      }
+      return paper.reviewStatus === reviewStatusFilter && matchesSearch;
     });
-  }, [selectedTheme, searchQuery, statusFilter, papers]);
+  }, [viewMode, selectedTheme, searchQuery, reviewStatusFilter, papers]);
 
   const statusCounts = useMemo(() => ({
     all: papers.length,
@@ -155,61 +227,90 @@ export default function App() {
           
           {/* Sidebar Filters */}
           <aside className="lg:col-span-1 space-y-6">
-            {/* Review Status Filter */}
+            {/* View Mode Selector */}
             <div>
-              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <ClipboardList className="w-4 h-4" />
-                Review Status
+              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">
+                Navigation
               </h2>
-              <div className="space-y-1">
-                {([['all', 'All Papers', CircleDot], ['unreviewed', 'Unreviewed', CircleDot], ['included', 'Included', Check], ['excluded', 'Excluded', Ban]] as const).map(([key, label, Icon]) => (
-                  <button
-                    key={key}
-                    onClick={() => setStatusFilter(key)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
-                      statusFilter === key ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon className={`w-3.5 h-3.5 ${key === 'included' ? 'text-emerald-500' : key === 'excluded' ? 'text-red-400' : ''}`} />
-                      {label}
-                    </span>
-                    <span className="text-xs text-slate-400">{statusCounts[key]}</span>
-                  </button>
-                ))}
+              <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+                <button
+                  onClick={() => setViewMode('all')}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    viewMode === 'all' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All Papers
+                </button>
+                <button
+                  onClick={() => setViewMode('review')}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    viewMode === 'review' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Full-Text Review
+                </button>
               </div>
             </div>
 
-            {/* Theme Filter */}
-            <div>
-              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Filter className="w-4 h-4" />
-                Research Themes
-              </h2>
-              <div className="space-y-1">
-                <button
-                  onClick={() => setSelectedTheme(null)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                    !selectedTheme ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  All Research
-                </button>
-                {themes.map((theme) => (
+            {/* All Papers: Theme Filter */}
+            {viewMode === 'all' && (
+              <div>
+                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <Filter className="w-4 h-4" />
+                  Research Themes
+                </h2>
+                <div className="space-y-1">
                   <button
-                    key={theme}
-                    onClick={() => setSelectedTheme(theme)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors border-l-4 ${
-                      selectedTheme === theme 
-                        ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-600 shadow-sm' 
-                        : 'text-slate-600 hover:bg-slate-100 border-transparent'
+                    onClick={() => setSelectedTheme(null)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                      !selectedTheme ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    {theme}
+                    All Research
                   </button>
-                ))}
+                  {themes.map((theme) => (
+                    <button
+                      key={theme}
+                      onClick={() => setSelectedTheme(theme)}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors border-l-4 ${
+                        selectedTheme === theme 
+                          ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-600 shadow-sm' 
+                          : 'text-slate-600 hover:bg-slate-100 border-transparent'
+                      }`}
+                    >
+                      {theme}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Full-Text Review: Status Filter */}
+            {viewMode === 'review' && (
+              <div>
+                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4" />
+                  Review Status
+                </h2>
+                <div className="space-y-1">
+                  {([['unreviewed', 'Unreviewed', CircleDot], ['included', 'Included', Check], ['excluded', 'Excluded', Ban]] as const).map(([key, label, Icon]) => (
+                    <button
+                      key={key}
+                      onClick={() => setReviewStatusFilter(key)}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
+                        reviewStatusFilter === key ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Icon className={`w-3.5 h-3.5 ${key === 'included' ? 'text-emerald-500' : key === 'excluded' ? 'text-red-400' : ''}`} />
+                        {label}
+                      </span>
+                      <span className="text-xs text-slate-400">{statusCounts[key]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="p-4 bg-indigo-900 rounded-2xl text-white shadow-xl shadow-indigo-200 overflow-hidden relative">
               <div className="relative z-10">
@@ -226,7 +327,12 @@ export default function App() {
           <section className="lg:col-span-3 space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold text-slate-900">
-                {selectedTheme || "All Recent Publications"}
+                {viewMode === 'all'
+                  ? (selectedTheme || "All Papers")
+                  : reviewStatusFilter === 'included' ? 'Included Papers'
+                    : reviewStatusFilter === 'excluded' ? 'Excluded Papers'
+                    : 'Unreviewed Papers'
+                }
                 <span className="ml-2 text-slate-400 font-normal text-lg">({filteredPapers.length})</span>
               </h2>
             </div>
@@ -515,12 +621,18 @@ export default function App() {
 
               {/* Modal Footer */}
               <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-medium text-slate-500">Review Status:</span>
                   {(['included', 'excluded', 'unreviewed'] as const).map(status => (
                     <button
                       key={status}
-                      onClick={() => updatePaper(selectedPaper.id, { reviewStatus: status })}
+                      onClick={() => {
+                        if (status === 'excluded') {
+                          openExclusionDialog(selectedPaper.id);
+                          return;
+                        }
+                        updatePaper(selectedPaper.id, { reviewStatus: status });
+                      }}
                       className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
                         selectedPaper.reviewStatus === status
                           ? status === 'included' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
@@ -532,12 +644,81 @@ export default function App() {
                       {status === 'included' ? 'Included' : status === 'excluded' ? 'Excluded' : 'Unreviewed'}
                     </button>
                   ))}
+                  {selectedPaper.reviewStatus === 'excluded' && selectedPaper.exclusionReason && (
+                    <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">{selectedPaper.exclusionReason}</span>
+                  )}
                 </div>
                 <button 
                   onClick={() => setSelectedPaper(null)}
                   className="px-6 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm"
                 >
                   Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Exclusion Reason Dialog */}
+      <AnimatePresence>
+        {pendingExclusionId && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={cancelExclusion}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4"
+            >
+              <h3 className="text-lg font-bold text-slate-900">Reason for Exclusion</h3>
+              <p className="text-sm text-slate-500">Select at least one reason or provide a custom one.</p>
+              <div className="space-y-2">
+                {EXCLUSION_REASONS.map(reason => (
+                  <button
+                    key={reason}
+                    onClick={() => toggleReason(reason)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors border ${
+                      selectedReasons.has(reason)
+                        ? 'bg-red-50 border-red-300 text-red-700 font-medium'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
+              <div>
+                <input
+                  type="text"
+                  value={customReason}
+                  onChange={e => setCustomReason(e.target.value)}
+                  placeholder="Or type a custom reason..."
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && (selectedReasons.size > 0 || customReason.trim())) confirmExclusion();
+                  }}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  onClick={cancelExclusion}
+                  className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmExclusion}
+                  disabled={selectedReasons.size === 0 && !customReason.trim()}
+                  className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Exclude Paper
                 </button>
               </div>
             </motion.div>

@@ -15,4 +15,5 @@ export interface Paper {
   reviewStatus: ReviewStatus;
   covidenceId?: string;
   notes?: string;
+  exclusionReason?: string;
 }
