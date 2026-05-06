@@ -30,6 +30,12 @@ function parseTags(tagsField: string | undefined): string[] {
   return [...new Set(tags)];
 }
 
+function parseRawTags(tagsField: string | undefined): string[] {
+  if (!tagsField || !tagsField.trim()) return [];
+  const tags = tagsField.split(';').map(t => t.trim()).filter(t => t.length > 0);
+  return [...new Set(tags)];
+}
+
 function generateId(title: string, year: string | number): string {
   const firstAuthorWord = title.split(/\s+/)[0]?.toLowerCase().replace(/[^a-z]/g, '') || 'unknown';
   return `${firstAuthorWord}-${year}-imported-${Math.random().toString(36).slice(2, 7)}`;
@@ -114,6 +120,7 @@ export function parseCsvFile(file: File, existingPapers: Paper[]): Promise<CsvIm
             abstract: row.Abstract?.trim() || '',
             doi,
             themes: parseTags(row.Tags),
+            tags: parseRawTags(row.Tags),
             keyFindings: [],
             reviewStatus: 'unreviewed',
             covidenceId: row['Covidence #']?.trim() || undefined,

@@ -21,18 +21,22 @@ import {
   Plus,
   Check,
   Ban,
-  CircleDot
+  CircleDot,
+  Tag,
+  Trash2,
+  ArrowLeft
 } from 'lucide-react';
 import { PAPERS as INITIAL_PAPERS, THEMES as INITIAL_THEMES, Paper } from './data';
 import type { ReviewStatus } from './types';
 import { parseCsvFile } from './csvParser';
+import { parseRisFile } from './risParser';
 
-const STORAGE_KEYS = { papers: 'mas-health-papers', themes: 'mas-health-themes' } as const;
+const STORAGE_KEYS = { papers: 'mas-health-papers', themes: 'mas-health-themes', tags: 'mas-health-tags' } as const;
 
 function loadPapers(): Paper[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.papers);
-    if (saved) return JSON.parse(saved);
+    if (saved) return JSON.parse(saved).map((p: Paper) => ({ ...p, tags: p.tags ?? [] }));
   } catch {}
   return INITIAL_PAPERS;
 }
@@ -43,6 +47,16 @@ function loadThemes(): string[] {
     if (saved) return JSON.parse(saved);
   } catch {}
   return [...INITIAL_THEMES];
+}
+
+function loadTags(papers: Paper[]): string[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEYS.tags);
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  const tags = new Set<string>();
+  papers.forEach(p => p.tags.forEach(t => tags.add(t)));
+  return [...tags];
 }
 
 export default function App() {
@@ -58,10 +72,16 @@ export default function App() {
   const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
   const [newThemeOpen, setNewThemeOpen] = useState(false);
   const [pendingExclusionId, setPendingExclusionId] = useState<string | null>(null);
+  const [pendingScreeningId, setPendingScreeningId] = useState<string | null>(null);
   const [selectedReasons, setSelectedReasons] = useState<Set<string>>(new Set());
   const [customReason, setCustomReason] = useState("");
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [allTags, setAllTags] = useState<string[]>(() => loadTags(loadPapers()));
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
+  const [newTagOpen, setNewTagOpen] = useState(false);
+  const [newTagInput, setNewTagInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,19 +92,29 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.themes, JSON.stringify(themes));
   }, [themes]);
 
-  // CSV import handler
-  const handleCsvImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.tags, JSON.stringify(allTags));
+  }, [allTags]);
+
+  const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const result = await parseCsvFile(file, papers);
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const result = ext === 'ris'
+      ? await parseRisFile(file, papers)
+      : await parseCsvFile(file, papers);
     if (result.errors.length > 0) {
       setImportMsg(`Error: ${result.errors.join(', ')}`);
     } else {
       setPapers(prev => [...prev, ...result.imported]);
-      // Add any new themes from imported papers
       const allThemes = new Set(themes);
       result.imported.forEach(p => p.themes.forEach(t => allThemes.add(t)));
       setThemes([...allThemes]);
+      setAllTags(prev => {
+        const next = new Set(prev);
+        result.imported.forEach(p => p.tags.forEach(t => next.add(t)));
+        return next.size === prev.length ? prev : [...next];
+      });
       setImportMsg(`Imported ${result.imported.length} papers. ${result.duplicatesSkipped} duplicates skipped.`);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -151,6 +181,24 @@ export default function App() {
     setCustomReason("");
   }, [pendingExclusionId, selectedReasons, customReason, updatePaper]);
 
+  const openScreeningDialog = useCallback((paperId: string) => {
+    setPendingScreeningId(paperId);
+  }, []);
+
+  const cancelScreening = useCallback(() => {
+    setPendingScreeningId(null);
+  }, []);
+
+  const confirmScreening = useCallback(() => {
+    if (!pendingScreeningId) return;
+    const paper = papers.find(p => p.id === pendingScreeningId);
+    setPapers(prev => prev.filter(p => p.id !== pendingScreeningId));
+    setSelectedPaper(null);
+    setPendingScreeningId(null);
+    setImportMsg(`Moved "${paper?.title || 'Paper'}" back to screening.`);
+    setTimeout(() => setImportMsg(null), 5000);
+  }, [pendingScreeningId, papers]);
+
   const toggleReason = useCallback((reason: string) => {
     setSelectedReasons(prev => {
       const next = new Set(prev);
@@ -190,6 +238,32 @@ export default function App() {
     setThemes(prev => [...prev, trimmed]);
   }, [themes]);
 
+  const removeTagFromPaper = useCallback((paperId: string, tag: string) => {
+    setPapers(prev => prev.map(p => p.id === paperId ? { ...p, tags: p.tags.filter(t => t !== tag) } : p));
+    setSelectedPaper(prev => prev && prev.id === paperId ? { ...prev, tags: prev.tags.filter(t => t !== tag) } : prev);
+  }, []);
+
+  const addTagToPaper = useCallback((paperId: string, tag: string) => {
+    setPapers(prev => prev.map(p => {
+      if (p.id !== paperId || p.tags.includes(tag)) return p;
+      return { ...p, tags: [...p.tags, tag] };
+    }));
+    setSelectedPaper(prev => {
+      if (!prev || prev.id !== paperId || prev.tags.includes(tag)) return prev;
+      return { ...prev, tags: [...prev.tags, tag] };
+    });
+    setAllTags(prev => {
+      if (prev.includes(tag)) return prev;
+      return [...prev, tag];
+    });
+  }, []);
+
+  const addNewTag = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || allTags.includes(trimmed)) return;
+    setAllTags(prev => [...prev, trimmed]);
+  }, [allTags]);
+
   const filteredPapers = useMemo(() => {
     return papers.filter(paper => {
       const matchesSearch = paper.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -197,11 +271,12 @@ export default function App() {
                            paper.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase()));
       if (viewMode === 'all') {
         const matchesTheme = !selectedTheme || paper.themes.includes(selectedTheme);
-        return matchesTheme && matchesSearch;
+        const matchesTag = !selectedTag || paper.tags.includes(selectedTag);
+        return matchesTheme && matchesTag && matchesSearch;
       }
       return paper.reviewStatus === reviewStatusFilter && matchesSearch;
     });
-  }, [viewMode, selectedTheme, searchQuery, reviewStatusFilter, papers]);
+  }, [viewMode, selectedTheme, selectedTag, searchQuery, reviewStatusFilter, papers]);
 
   const statusCounts = useMemo(() => ({
     all: papers.length,
@@ -234,13 +309,13 @@ export default function App() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <input ref={fileInputRef} type="file" accept=".csv" onChange={handleCsvImport} className="hidden" />
+            <input ref={fileInputRef} type="file" accept=".csv,.ris" onChange={handleFileImport} className="hidden" />
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-full text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
             >
               <Upload className="w-4 h-4" />
-              Import CSV
+              Import
             </button>
           </div>
         </div>
@@ -308,6 +383,40 @@ export default function App() {
                       }`}
                     >
                       {theme}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* All Papers: Tag Filter */}
+            {viewMode === 'all' && allTags.length > 0 && (
+              <div>
+                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <Tag className="w-4 h-4" />
+                  Tags
+                </h2>
+                <div className="space-y-1">
+                  <button
+                    onClick={() => setSelectedTag(null)}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                      !selectedTag ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    All Tags
+                  </button>
+                  {allTags.map((tag) => (
+                    <button
+                      key={tag}
+                      onClick={() => setSelectedTag(tag)}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
+                        selectedTag === tag
+                          ? 'bg-amber-50 text-amber-700 font-medium border-l-4 border-amber-600 shadow-sm'
+                          : 'text-slate-600 hover:bg-slate-100 border-l-4 border-transparent'
+                      }`}
+                    >
+                      <span className="truncate">{tag}</span>
+                      <span className="text-xs text-slate-400 ml-2">{papers.filter(p => p.tags.includes(tag)).length}</span>
                     </button>
                   ))}
                 </div>
@@ -704,6 +813,106 @@ export default function App() {
                     )}
                   </div>
                 </div>
+
+                <div className="pt-8 border-t border-slate-100">
+                  <h4 className="text-sm font-bold text-slate-900 mb-4 uppercase tracking-tight">Tags</h4>
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {selectedPaper.tags.length === 0 && (
+                      <span className="text-xs text-slate-400 italic">No tags assigned</span>
+                    )}
+                    {selectedPaper.tags.map(t => (
+                      <div key={t} className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 pl-3 pr-1.5 py-1 rounded-full text-xs font-medium text-amber-700">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                        {t}
+                        <button
+                          onClick={() => removeTagFromPaper(selectedPaper.id, t)}
+                          className="w-4 h-4 rounded-full hover:bg-amber-200 flex items-center justify-center transition-colors"
+                          title={`Remove "${t}"`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative">
+                      <button
+                        onClick={() => setTagDropdownOpen(!tagDropdownOpen)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add tag
+                      </button>
+                      {tagDropdownOpen && (
+                        <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto">
+                          {allTags.filter(t => !selectedPaper.tags.includes(t)).length === 0 && (
+                            <div className="px-3 py-2 text-xs text-slate-400 italic">All tags assigned</div>
+                          )}
+                          {allTags.filter(t => !selectedPaper.tags.includes(t)).map(t => (
+                            <button
+                              key={t}
+                              onClick={() => { addTagToPaper(selectedPaper.id, t); setTagDropdownOpen(false); }}
+                              className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-amber-50 hover:text-amber-700 transition-colors"
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {!newTagOpen ? (
+                      <button
+                        onClick={() => setNewTagOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-dashed border-slate-300 rounded-full text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Create new tag
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={newTagInput}
+                          onChange={e => setNewTagInput(e.target.value)}
+                          placeholder="Tag name..."
+                          className="px-3 py-1.5 bg-white border border-amber-300 rounded-full text-xs focus:ring-2 focus:ring-amber-500 outline-none w-52"
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && newTagInput.trim()) {
+                              addNewTag(newTagInput);
+                              addTagToPaper(selectedPaper.id, newTagInput.trim());
+                              setNewTagInput('');
+                              setNewTagOpen(false);
+                            }
+                            if (e.key === 'Escape') {
+                              setNewTagInput('');
+                              setNewTagOpen(false);
+                            }
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            if (newTagInput.trim()) {
+                              addNewTag(newTagInput);
+                              addTagToPaper(selectedPaper.id, newTagInput.trim());
+                              setNewTagInput('');
+                              setNewTagOpen(false);
+                            }
+                          }}
+                          className="px-2 py-1.5 bg-amber-600 text-white rounded-full text-xs font-medium hover:bg-amber-700 transition-colors"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => { setNewTagInput(''); setNewTagOpen(false); }}
+                          className="px-2 py-1.5 bg-slate-100 text-slate-500 rounded-full text-xs font-medium hover:bg-slate-200 transition-colors"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Modal Footer */}
@@ -734,6 +943,14 @@ export default function App() {
                   {selectedPaper.reviewStatus === 'excluded' && selectedPaper.exclusionReason && (
                     <span className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded-full">{selectedPaper.exclusionReason}</span>
                   )}
+                  <span className="mx-1 text-slate-300">|</span>
+                  <button
+                    onClick={() => openScreeningDialog(selectedPaper.id)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Move Back to Screening
+                  </button>
                 </div>
                 <button 
                   onClick={() => setSelectedPaper(null)}
@@ -811,6 +1028,60 @@ export default function App() {
             </motion.div>
           </div>
         )}
+      </AnimatePresence>
+
+      {/* Move Back to Screening Confirmation Dialog */}
+      <AnimatePresence>
+        {pendingScreeningId && (() => {
+          const paper = papers.find(p => p.id === pendingScreeningId);
+          return paper ? (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={cancelScreening}
+                className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-100 rounded-full">
+                    <Trash2 className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900">Move Back to Screening</h3>
+                </div>
+                <p className="text-sm text-slate-600">
+                  This will permanently remove the following paper from the review:
+                </p>
+                <p className="text-sm font-semibold text-slate-900 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200">
+                  {paper.title}
+                </p>
+                <p className="text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
+                  This paper will no longer appear in this review. This action cannot be undone.
+                </p>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={cancelScreening}
+                    className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmScreening}
+                    className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700 transition-colors"
+                  >
+                    Move Back to Screening
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          ) : null;
+        })()}
       </AnimatePresence>
 
       {/* Background Decor */}
