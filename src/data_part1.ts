@@ -11,6 +11,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Nat Biomed Eng",
     doi: "10.1038/s41551-025-01471-z",
     abstract: "Proposes DrugGPT, a knowledge-grounded collaborative LLM for accurate, evidence-based recommendations for clinical decisions. Evaluated on drug/dosage recommendations and drug-drug interactions.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS for Pharmacology", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["Outperforms existing LLMs with fewer parameters", "Achieves state-of-the-art across all metrics", "Reduces hallucinations via knowledge-grounding"]
   },
@@ -22,6 +23,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "J Am Nutr Assoc",
     doi: "10.1080/27697061.2025.2571878",
     abstract: "Evaluates GPT-4o's ability to identify dietary errors in hospital menus and explores structured AI-expert collaboration in clinical workflows.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["High accuracy (Kappa 0.892)", "AI follows strict rules whereas dietitians incorporate patient tolerance", "Supports role as a prescreening tool"]
   },
@@ -33,6 +35,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "NPJ Digit Med",
     doi: "10.1038/s41746-026-02362-6",
     abstract: "OncoPainBot simulates reasoning of multiple experts via specialized agents (Extraction, Mechanism Reasoning, Planning, Safety-Check) for personalized analgesic care.",
+    tags: [],
     themes: ["LLM-based MAS in Oncology", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["Decision accuracy of 0.841", "High consistency with real-world clinical documents", "Reliable drug selection verified by experts"]
   },
@@ -44,6 +47,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "medRxiv",
     doi: "10.1101/2025.04.07.25325243",
     abstract: "Combines LLMs for trial extraction with collaborative filtering to suggest treatments for rare cancers using structured data from ClinicalTrials.gov.",
+    tags: [],
     themes: ["LLM-based MAS in Oncology", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["Identified clinically meaningful new treatments for melanoma", "Successfully cover 78 cancer types and 5,315 interventions", "Predictive accuracy ranges 0.49-0.62 RMSE"]
   },
@@ -55,6 +59,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Front Neurosci",
     doi: "10.3389/fnins.2025.1688509",
     abstract: "Multi-agent framework (Information Collection + Diagnosis Agents) that preserves diagnostic uncertainty to support neuro-ophthalmic screening.",
+    tags: [],
     themes: ["LLM-based MAS in Specialized Diagnosis", "LLM-based MAS with Role-playing Agents in Healthcare"],
     keyFindings: ["Improves robustness over single-model baselines", "Uncertainty-aware fusion for downstream triage", "Ensembles multiple LLMs with CNN image branches"]
   },
@@ -66,6 +71,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "NPJ Digit Med",
     doi: "10.1038/s41746-025-01940-4",
     abstract: "CARE-AD uses specialized agents to extract AD symptoms and predict onset up to 10 years before diagnosis from longitudinal EHR notes.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS in Specialized Diagnosis"],
     keyFindings: ["Accuracy of 0.53 vs 0.26-0.45 for single models", "Effective early risk assessment", "Collaborative diagnostic emulation"]
   },
@@ -77,6 +83,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "ArXiv",
     doi: "N/A",
     abstract: "Multi-agent system (AI, KG, and Search agents) combining specialized perspectives with transparent CoT and ReAct reasoning for drug-target interaction.",
+    tags: [],
     themes: ["LLM-based MAS for Pharmacology", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["45% F1 score improvement over non-reasoning GPT-4o mini", "Detailed, human-interpretable reasoning", "KG agent most impactful after AI agent"]
   },
@@ -88,6 +95,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "World J Gastroenterol",
     doi: "10.3748/wjg.v31.i31.109948",
     abstract: "Four-tiered multimodal framework integrating info extraction, chain construction, suggestion, and risk analysis for gastrointestinal diseases.",
+    tags: [],
     themes: ["LLM-based Multi-modal MAS", "LLM-based MAS in Specialized Diagnosis", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["97.8% diagnostic accuracy", "Outperforms single-modal LLM tools significantly", "High experts commendation for logical coherence"]
   },
@@ -99,6 +107,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "JAMA Netw Open",
     doi: "10.1001/jamanetworkopen.2025.33277",
     abstract: "Multiagent system (Critique, Search, Knowledge Retrieval, Medication Verification) to identify improvements in clinical order sets.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["19% of generated suggestions were rated as useful", "Scalable approach for CDSS enhancement", "Improved alignment (Kappa 0.41) after expert alignment"]
   },
@@ -110,6 +119,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "iScience",
     doi: "10.1016/j.isci.2025.113984",
     abstract: "Coated-LLM employs specialized Researcher, Reviewer, and Moderator agents to generate and evaluate drug combination hypotheses for Alzheimer's.",
+    tags: [],
     themes: ["LLM-based MAS for Pharmacology", "LLM-based MAS with Role-playing Agents in Healthcare"],
     keyFindings: ["Accuracy: 0.74 vs 0.52 for traditional methods", "Experimentally validated drug combination efficacy", "Scalable approach for scientific reasoning"]
   },
@@ -121,6 +131,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "J Med Internet Res",
     doi: "10.2196/59439",
     abstract: "Simulates clinical dynamics (Devil's Advocate, Expert, Facilitator) to counter confirmation bias, anchoring bias, and premature closure.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["76% diagnostic accuracy vs human evaluators", "Corrects misconceptions even with misleading initial data", "Framework 4-C performed best"]
   },
@@ -132,6 +143,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Biol Methods Protoc",
     doi: "10.1093/biomethods/bpag006",
     abstract: "Evaluates majority voting, multi-agent debate, and adjudication strategies for automated systematic review abstract screening.",
+    tags: [],
     themes: ["LLM-based MAS for Healthcare Workflow", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["Up to 68% workload reduction", "Majority voting is the best cost-effective strategy", "Multi-agent debate improves weaker models most"]
   },
@@ -143,6 +155,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Int J Med Inform",
     doi: "10.1016/j.ijmedinf.2025.106136",
     abstract: "Medical Agent Refinement and Collaboration (MedARC) framework for structured debate, cross-agent summarization, and confidence-aware aggregation.",
+    tags: [],
     themes: ["LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["Boosts PubMedQA accuracy by 4.3%", "Human evaluation confirms gains in factual consistency", "Structured summarization module independent contribution to performance"]
   },
@@ -154,6 +167,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Pharmacotherapy",
     doi: "10.1002/phar.70131",
     abstract: "Agentic pipeline based on GPT-4o for parsing clinical history and LiverTox data to analyze suspected liver injury in ICU patients.",
+    tags: [],
     themes: ["LLM-based MAS in Specialized Diagnosis", "LLM-based MAS for Pharmacology", "LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["Superior knowledge recall over clinicians", "Task division minimizes information loss in long histories", "Reasoning aligned with medical consensus"]
   },
@@ -165,6 +179,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Clin Exp Emerg Med",
     doi: "10.15441/ceem.26.136",
     abstract: "Scoping review of 35 studies on non-agentic vs agentic LLM systems in emergency departments, identifying gaps in workflow-aware design.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS for Healthcare Workflow", "LLM-based MAS Surveys & Benchmarks"],
     keyFindings: ["Shift from task-level to multi-agent role coordination noted", "Highlight need for prospective safety validation", "Concentrated on triage, diagnosis, and documentation"]
   },
@@ -176,6 +191,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Proc ACM Int Conf Ubiquitous Comput",
     doi: "10.1145/3714394.3756185",
     abstract: "Adapts GLOSS multi-agent system to triangulate self-reports and passive sensor data for improved activity recognition labels.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["63-75% agreement with human recall", "Corrects common human annotation errors", "Scalable approach for real-world behavior monitoring"]
   },
@@ -187,6 +203,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "JCO Clin Cancer Inform",
     doi: "10.1200/CCI-25-00176",
     abstract: "Six-party AI agent system (Planning, Data Retrieval, Cleaning, Statistics, Review) to automate replication of bone marrow transplant primary outcomes.",
+    tags: [],
     themes: ["LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS in Oncology"],
     keyFindings: ["53.3% outcome replication vs 35% for ChatGPT 4o", "No hallucinations observed in multiagent approach", "Most failures due to data transformation issues"]
   },
@@ -198,6 +215,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Lancet Digit Health",
     doi: "10.1016/j.landig.2025.100966",
     abstract: "Simulates MDT discussions (Hepatologist, Surgeon, Cardiologist, Social Worker) to improve objective treatment rationing in liver transplants.",
+    tags: [],
     themes: ["LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["92% accuracy in predicting 1-year survival", "98.19% Identifying absolute contraindications", "Step toward objective transplatation selection"]
   },
@@ -209,6 +227,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "NPJ Digit Med",
     doi: "10.1038/s41746-026-02409-8",
     abstract: "Meta-analysis of 50 studies comparing LLMs and clinicians across specialties, exploring collaborative (Human + AI) performance gains.",
+    tags: [],
     themes: ["LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS in Clinical Decision-making", "LLM-based MAS Surveys & Benchmarks"],
     keyFindings: ["LLM-assisted HCPs outperformed HCPs alone", "Diagnostic accuracy improved by 13% for top-1 diagnoses", "Relative accuracy of LLMs vs HCPs improved with model diversity"]
   },
@@ -220,6 +239,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Cell Rep Med",
     doi: "10.1016/j.xcrm.2025.102547",
     abstract: "Iteratively refines medical reasoning through multi-round structured confrontation and collaboration among diverse models.",
+    tags: [],
     themes: ["LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["92.6% accuracy on MedQA", "Outperformed domain-specific Med-PaLM 2", "80% top-1 accuracy in complex diagnostic dialog tasks"]
   },
@@ -231,6 +251,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "AMIA Annu Symp Proc",
     doi: "N/A",
     abstract: "Multi-agent framework combining EHR-based machine learning with LLMs and RAG for explainable AKI prediction.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS in Specialized Diagnosis"],
     keyFindings: ["Accuracy of 0.827 on MIMIC-IV cohort", "Reduces hallucinations via ML model integration", "Bridged gap to clinically interpretable reports"]
   },
@@ -242,6 +263,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "ACM CIKM",
     doi: "10.1145/3746252.3760894",
     abstract: "Five role-specific agents (Patient, Physician, Coder, Reviewer, Adjuster) simulating real-world medical coding with SOAP structures.",
+    tags: [],
     themes: ["LLM-based MAS for Healthcare Workflow", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["Outperformed CoT and self-consistency", "Competitive with fine-tuned models", "Significantly improved coding of rare conditions"]
   },
@@ -253,6 +275,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Advancements in Multi-Agent LLM Systems",
     doi: "10.4018/979-8-3373-1419-8.ch002",
     abstract: "Overview of technical implementation including guardrails, self-reflection, and EHR integration for precision medicine.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS Surveys & Benchmarks"],
     keyFindings: ["Emphasizes scalability and specialization", "Discusses IoT and natural language interface integration", "Focus on decision transparency and explainable AI"]
   },
@@ -264,6 +287,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "IEEE ICASSP",
     doi: "10.1109/ICASSP49660.2025.10889517",
     abstract: "SeM-Agents framework with residual structure and self-evolving experience databases to refine consultation rationality.",
+    tags: [],
     themes: ["LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["89.2% accuracy on MedQA", "Incremental improvement via Correct Consultation Experience Database", "Safety review layer for human-aligned decisions"]
   },
@@ -275,6 +299,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "IEEE MIPR",
     doi: "10.1109/MIPR67560.2025.00078",
     abstract: "Coordinates specialized vision models with role-specific agents for interactive diagnostic glaucoma reporting.",
+    tags: [],
     themes: ["LLM-based Multi-modal MAS", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS in Specialized Diagnosis"],
     keyFindings: ["Reduces hallucination risk in imaging reports", "Tailored interface for clinical/educational use", "Director agent coordination improves reliability"]
   },
@@ -286,6 +311,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "J King Saud Univ Comput Inf Sci",
     doi: "10.1007/s44443-025-00311-z",
     abstract: "Iterative planner-retriever model architecture to find factual cases and literature while reformulating complex cardiology queries.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["Improved recall by 6.1 points", "Robust to query noise and novel conditions", "Mitigates hallucinations via evidence-based relevance estimator"]
   },
@@ -297,6 +323,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Digital Health",
     doi: "10.1177/20552076261428395",
     abstract: "Stress tests 14 LLMs on adapted 'Trolley dilemmas' to evaluate deontological versus utilitarian reasoning in clinical contexts.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["6.3% of outputs recommended impermissible actions", "Large variance in utilitarian bias between models", "Motivates benchmarked evaluation of refusal behaviors"]
   },
@@ -308,6 +335,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "ACM ICP",
     doi: "10.1145/3744103.3744144",
     abstract: "Decomposes complex medical rescue rescue tasks into subtasks using CMA-LLM and hierarchical reinforcement learning for unmanned equipment.",
+    tags: [],
     themes: ["LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["Improved learning coordination among rescue agents", "Hierarchical method reduces observation space", "Modular architecture generalizes to new rescue scenarios"]
   },
@@ -319,6 +347,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Applied Soft Computing",
     doi: "10.1016/j.asoc.2025.113684",
     abstract: "Mixture-of-Doctors module for parallel diagnostic streams in underserved communities, ensuring groundedness via RAG.",
+    tags: [],
     themes: ["LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["Outperformed state-of-the-art on MedQA", "No parameter adjustment required for deployment", "Bridges gaps for socially vulnerable groups"]
   },
@@ -330,6 +359,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "ACM Web Conf",
     doi: "10.1145/3696410.3714877",
     abstract: "Integrates numerical expert model predictions with LLM-based reasoning via MetaAgent orchestration and MDT-style debate.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["Superior performance in mortality and readmission prediction", "Bridges gap between structured data and text reasoning", "RAG module addresses medical knowledge currency"]
   },
@@ -341,6 +371,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "IEEE TENCON",
     doi: "10.1109/TENCON66050.2025.11375163",
     abstract: "Voice-first assistant utilizing specialized agents for scheduling, billing, and FAQs to support elderly patients in polyclinics.",
+    tags: [],
     themes: ["LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["ASR WER of 22.22% for Singlish", "1.00 groundedness in RAG module", "Streamlined administrative burden for healthcare staff"]
   },
@@ -352,6 +383,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "NeurIPS",
     doi: "N/A",
     abstract: "Automatically assigns solo or group collaboration structure based on task difficulty and medical complexity classification.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["Best performance in 7/10 benchmarks", "Moderator review + RAG improved accuracy by 11.8%", "Effective classification of task difficulty compared to physicians"]
   },
@@ -363,6 +395,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "LNCS",
     doi: "10.1007/978-3-032-12092-2_23",
     abstract: "KaiMed platform built on GPT-4o-mini and proprietary ontology, literature graph, and safety filters for auditable reasoning.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["KaiMed surfaces fenotypically specific investigational options", "Ontology grounding ensures semantic integrity over fluent hallucination", "Role-specific agents specialized in safety and planning"]
   },
@@ -374,6 +407,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Findings ACL",
     doi: "10.18653/v1/2024.findings-acl.33",
     abstract: "Five-step collaborative framework (專家 gather, Analysis, Report, Iterative Debate, Decision) for zero-shot clinical reasoning.",
+    tags: [],
     themes: ["LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS versus Single LLM in Healthcare"],
     keyFindings: ["Excelled at mining internal expertise of base models", "Superior zero-shot performance on 9 datasets (MedQA, MMLU)", "Consensus-finding mechanism improves logical consistency"]
   },
@@ -385,6 +419,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Information Fusion",
     doi: "10.1016/j.inffus.2025.103743",
     abstract: "Regularization-guided intent resolution system with rotation agent collaboration for information fusion in multi-round dialogues.",
+    tags: [],
     themes: ["LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS in Clinical Decision-making"],
     keyFindings: ["Outperforms base LLMs on 4 composite intent benchmarks", "Regularization module mitigates redundancy hallucinations", "Rotation mechanism ensures balanced peer review"]
   },
@@ -396,6 +431,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Information Fusion",
     doi: "10.1016/j.inffus.2025.103557",
     abstract: "Hybrid model adjusting relationship weights in knowledge graphs based on multi-agent debate results for liver diagnosis.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS in Specialized Diagnosis"],
     keyFindings: ["94.5% accuracy on Beijing Friendship Hospital dataset", "11.39% F1 improvement over SOTA baselines", "Verifies results with guidelines for clinical standard alignment"]
   },
@@ -407,6 +443,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "CCIS",
     doi: "10.1007/978-3-032-05925-3_11",
     abstract: "Presets chatbot framework transforming natural language to FHIR/SQL queries to automate medical exam prescriptions.",
+    tags: [],
     themes: ["LLM-based MAS in Clinical Decision-making", "LLM-based MAS for Healthcare Workflow"],
     keyFindings: ["Successfully streamlines repetitive clinician workflows", "Real-time records retrieval from patient databases", "Demonstrates operational efficiency gains"]
   },
@@ -418,6 +455,7 @@ export const PAPERS_PART1: PaperInit[] = [
     journal: "Findings EMNLP",
     doi: "10.18653/v1/2024.findings-emnlp.329",
     abstract: "Self-confidence and early-stopping mechanisms integrated into role-playing triage agents referencing the ESI handbook.",
+    tags: [],
     themes: ["LLM-based MAS with Role-playing Agents in Healthcare", "LLM-based MAS versus Single LLM in Healthcare", "LLM-based MAS for Healthcare Workflow", "LLM-based MAS Surveys & Benchmarks"],
     keyFindings: ["First public benchmark dataset for ESI-level triage", "Outperforms both coarse and fine-grained state-of-the-art baselines", "Transparent knowledge retrieval from ESI handbooks"]
   }

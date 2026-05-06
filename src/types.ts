@@ -9,6 +9,7 @@ export interface Paper {
   abstract: string;
   doi: string;
   themes: string[];
+  tags: string[];
   keyFindings: string[];
   systemArchitecture?: string;
   comparisonWithSingleLLM?: string;
