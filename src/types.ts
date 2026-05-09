@@ -1,5 +1,11 @@
 export type ReviewStatus = "included" | "excluded" | "unreviewed";
 
+export interface Theme {
+  id: string;
+  name: string;
+  parentId: string | null;
+}
+
 export interface Paper {
   id: string;
   title: string;

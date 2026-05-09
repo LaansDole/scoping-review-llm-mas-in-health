@@ -24,29 +24,63 @@ import {
   CircleDot,
   Tag,
   Trash2,
-  ArrowLeft
+  ArrowLeft,
+  ListChecks,
+  CheckSquare,
+  Square
 } from 'lucide-react';
-import { PAPERS as INITIAL_PAPERS, THEMES as INITIAL_THEMES, Paper } from './data';
+import { PAPERS as INITIAL_PAPERS, THEMES as INITIAL_THEMES, Paper, Theme } from './data';
 import type { ReviewStatus } from './types';
 import { parseCsvFile } from './csvParser';
 import { parseRisFile } from './risParser';
 
 const STORAGE_KEYS = { papers: 'mas-health-papers', themes: 'mas-health-themes', tags: 'mas-health-tags' } as const;
 
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
 function loadPapers(): Paper[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.papers);
-    if (saved) return JSON.parse(saved).map((p: Paper) => ({ ...p, tags: p.tags ?? [] }));
+    if (saved) {
+      const papers: Paper[] = JSON.parse(saved).map((p: Paper) => ({ ...p, tags: p.tags ?? [] }));
+      const needsMigration = papers.length > 0 && papers[0].themes.length > 0 &&
+        papers[0].themes.some(t => t.includes(' ') || t !== t.toLowerCase());
+      if (needsMigration) {
+        return papers.map(p => ({
+          ...p,
+          themes: p.themes.map(t => slugify(t)),
+        }));
+      }
+      return papers;
+    }
   } catch {}
   return INITIAL_PAPERS;
 }
 
-function loadThemes(): string[] {
+function loadThemes(): Theme[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.themes);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && 'id' in parsed[0]) {
+        return parsed;
+      }
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'string') {
+        return migrateLegacyThemes(parsed);
+      }
+    }
   } catch {}
   return [...INITIAL_THEMES];
+}
+
+function migrateLegacyThemes(names: string[]): Theme[] {
+  return names.map(name => ({
+    id: slugify(name),
+    name,
+    parentId: null,
+  }));
 }
 
 function loadTags(papers: Paper[]): string[] {
@@ -61,7 +95,7 @@ function loadTags(papers: Paper[]): string[] {
 
 export default function App() {
   const [papers, setPapers] = useState<Paper[]>(loadPapers);
-  const [themes, setThemes] = useState<string[]>(loadThemes);
+  const [themes, setThemes] = useState<Theme[]>(loadThemes);
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
@@ -82,7 +116,25 @@ export default function App() {
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [newTagOpen, setNewTagOpen] = useState(false);
   const [newTagInput, setNewTagInput] = useState("");
+  const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
+  const [editingThemeValue, setEditingThemeValue] = useState("");
+  const [pendingDeleteThemeId, setPendingDeleteThemeId] = useState<string | null>(null);
+  const [addingSubThemeParentId, setAddingSubThemeParentId] = useState<string | null>(null);
+  const [subThemeInput, setSubThemeInput] = useState("");
+  const [addingTopTheme, setAddingTopTheme] = useState(false);
+  const [topThemeInput, setTopThemeInput] = useState("");
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedPaperIds, setSelectedPaperIds] = useState<Set<string>>(new Set());
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const [batchTagDropdownOpen, setBatchTagDropdownOpen] = useState(false);
+  const [batchRemoveDropdownOpen, setBatchRemoveDropdownOpen] = useState(false);
+  const [batchNewTagInput, setBatchNewTagInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setSelectedPaperIds(new Set());
+    setLastClickedIndex(null);
+  }, [viewMode, selectedTheme, selectedTag, searchQuery, reviewStatusFilter]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.papers, JSON.stringify(papers));
@@ -106,10 +158,32 @@ export default function App() {
     if (result.errors.length > 0) {
       setImportMsg(`Error: ${result.errors.join(', ')}`);
     } else {
-      setPapers(prev => [...prev, ...result.imported]);
-      const allThemes = new Set(themes);
-      result.imported.forEach(p => p.themes.forEach(t => allThemes.add(t)));
-      setThemes([...allThemes]);
+      const importedWithIds = result.imported.map(p => {
+        const mappedThemes = p.themes.map(t => {
+          const existing = themes.find(th => th.name === t);
+          if (existing) return existing.id;
+          return t;
+        });
+        return { ...p, themes: mappedThemes };
+      });
+      setPapers(prev => [...prev, ...importedWithIds]);
+      const newThemes: Theme[] = [];
+      const seenNames = new Set(themes.map(t => t.name));
+      importedWithIds.forEach(p => p.themes.forEach(tid => {
+        if (!themes.some(t => t.id === tid) && !newThemes.some(nt => nt.id === tid)) {
+          const originalName = result.imported.find(ip => ip.themes.includes(tid))?.themes.find(t => {
+            const existing = themes.find(th => th.name === t);
+            return existing?.id === tid;
+          }) || tid;
+          if (!seenNames.has(originalName)) {
+            seenNames.add(originalName);
+            newThemes.push({ id: tid, name: originalName, parentId: null });
+          }
+        }
+      }));
+      if (newThemes.length > 0) {
+        setThemes(prev => [...prev, ...newThemes]);
+      }
       setAllTags(prev => {
         const next = new Set(prev);
         result.imported.forEach(p => p.tags.forEach(t => next.add(t)));
@@ -216,27 +290,60 @@ export default function App() {
     updatePaper(id, { reviewStatus: next });
   }, [updatePaper, openExclusionDialog]);
 
-  const removeThemeFromPaper = useCallback((paperId: string, theme: string) => {
-    setPapers(prev => prev.map(p => p.id === paperId ? { ...p, themes: p.themes.filter(t => t !== theme) } : p));
-    setSelectedPaper(prev => prev && prev.id === paperId ? { ...prev, themes: prev.themes.filter(t => t !== theme) } : prev);
+  const removeThemeFromPaper = useCallback((paperId: string, themeId: string) => {
+    setPapers(prev => prev.map(p => p.id === paperId ? { ...p, themes: p.themes.filter(t => t !== themeId) } : p));
+    setSelectedPaper(prev => prev && prev.id === paperId ? { ...prev, themes: prev.themes.filter(t => t !== themeId) } : prev);
   }, []);
 
-  const addThemeToPaper = useCallback((paperId: string, theme: string) => {
+  const addThemeToPaper = useCallback((paperId: string, themeId: string) => {
     setPapers(prev => prev.map(p => {
-      if (p.id !== paperId || p.themes.includes(theme)) return p;
-      return { ...p, themes: [...p.themes, theme] };
+      if (p.id !== paperId || p.themes.includes(themeId)) return p;
+      return { ...p, themes: [...p.themes, themeId] };
     }));
     setSelectedPaper(prev => {
-      if (!prev || prev.id !== paperId || prev.themes.includes(theme)) return prev;
-      return { ...prev, themes: [...prev.themes, theme] };
+      if (!prev || prev.id !== paperId || prev.themes.includes(themeId)) return prev;
+      return { ...prev, themes: [...prev.themes, themeId] };
     });
   }, []);
 
-  const addNewTheme = useCallback((name: string) => {
+  const addNewTheme = useCallback((name: string, parentId: string | null = null) => {
     const trimmed = name.trim();
-    if (!trimmed || themes.includes(trimmed)) return;
-    setThemes(prev => [...prev, trimmed]);
+    if (!trimmed) return false;
+    const siblings = themes.filter(t => t.parentId === parentId);
+    if (siblings.some(t => t.name.toLowerCase() === trimmed.toLowerCase())) return false;
+    const newTheme: Theme = { id: crypto.randomUUID(), name: trimmed, parentId };
+    setThemes(prev => [...prev, newTheme]);
+    return true;
   }, [themes]);
+
+  const renameTheme = useCallback((id: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return false;
+    const theme = themes.find(t => t.id === id);
+    if (!theme) return false;
+    const siblings = themes.filter(t => t.parentId === theme.parentId && t.id !== id);
+    if (siblings.some(t => t.name.toLowerCase() === trimmed.toLowerCase())) return false;
+    setThemes(prev => prev.map(t => t.id === id ? { ...t, name: trimmed } : t));
+    return true;
+  }, [themes]);
+
+  const deleteTheme = useCallback((id: string) => {
+    const idsToRemove = new Set<string>();
+    idsToRemove.add(id);
+    themes.filter(t => t.parentId === id).forEach(t => idsToRemove.add(t.id));
+    setThemes(prev => prev.filter(t => !idsToRemove.has(t.id)));
+    setPapers(prev => prev.map(p => ({
+      ...p,
+      themes: p.themes.filter(tid => !idsToRemove.has(tid)),
+    })));
+    setSelectedPaper(prev => prev ? {
+      ...prev,
+      themes: prev.themes.filter(tid => !idsToRemove.has(tid)),
+    } : prev);
+    if (idsToRemove.has(selectedTheme || '')) {
+      setSelectedTheme(null);
+    }
+  }, [themes, selectedTheme]);
 
   const removeTagFromPaper = useCallback((paperId: string, tag: string) => {
     setPapers(prev => prev.map(p => p.id === paperId ? { ...p, tags: p.tags.filter(t => t !== tag) } : p));
@@ -264,19 +371,60 @@ export default function App() {
     setAllTags(prev => [...prev, trimmed]);
   }, [allTags]);
 
+  const batchAddTag = useCallback((paperIds: string[], tag: string) => {
+    setPapers(prev => prev.map(p => {
+      if (!paperIds.includes(p.id) || p.tags.includes(tag)) return p;
+      return { ...p, tags: [...p.tags, tag] };
+    }));
+    setSelectedPaper(prev => {
+      if (!prev || !paperIds.includes(prev.id) || prev.tags.includes(tag)) return prev;
+      return { ...prev, tags: [...prev.tags, tag] };
+    });
+    setAllTags(prev => {
+      if (prev.includes(tag)) return prev;
+      return [...prev, tag];
+    });
+  }, []);
+
+  const batchRemoveTag = useCallback((paperIds: string[], tag: string) => {
+    setPapers(prev => prev.map(p => {
+      if (!paperIds.includes(p.id) || !p.tags.includes(tag)) return p;
+      return { ...p, tags: p.tags.filter(t => t !== tag) };
+    }));
+    setSelectedPaper(prev => {
+      if (!prev || !paperIds.includes(prev.id) || !prev.tags.includes(tag)) return prev;
+      return { ...prev, tags: prev.tags.filter(t => t !== tag) };
+    });
+  }, []);
+
+  const getDescendantThemeIds = useCallback((themeId: string): Set<string> => {
+    const ids = new Set<string>();
+    ids.add(themeId);
+    themes.filter(t => t.parentId === themeId).forEach(t => ids.add(t.id));
+    return ids;
+  }, [themes]);
+
+  const getThemeName = useCallback((id: string): string => {
+    return themes.find(t => t.id === id)?.name || id;
+  }, [themes]);
+
   const filteredPapers = useMemo(() => {
     return papers.filter(paper => {
       const matchesSearch = paper.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                            paper.abstract.toLowerCase().includes(searchQuery.toLowerCase()) ||
                            paper.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase()));
       if (viewMode === 'all') {
-        const matchesTheme = !selectedTheme || paper.themes.includes(selectedTheme);
+        let matchesTheme = true;
+        if (selectedTheme) {
+          const allowedIds = getDescendantThemeIds(selectedTheme);
+          matchesTheme = paper.themes.some(tid => allowedIds.has(tid));
+        }
         const matchesTag = !selectedTag || paper.tags.includes(selectedTag);
         return matchesTheme && matchesTag && matchesSearch;
       }
       return paper.reviewStatus === reviewStatusFilter && matchesSearch;
     });
-  }, [viewMode, selectedTheme, selectedTag, searchQuery, reviewStatusFilter, papers]);
+  }, [viewMode, selectedTheme, selectedTag, searchQuery, reviewStatusFilter, papers, getDescendantThemeIds]);
 
   const statusCounts = useMemo(() => ({
     all: papers.length,
@@ -326,7 +474,7 @@ export default function App() {
         )}
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 ${multiSelectMode && selectedPaperIds.size > 0 ? 'pb-24' : ''}`}>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           
           {/* Sidebar Filters */}
@@ -372,19 +520,226 @@ export default function App() {
                   >
                     All Research
                   </button>
-                  {themes.map((theme) => (
+                  {themes.filter(t => !t.parentId).map((parent) => {
+                    const children = themes.filter(c => c.parentId === parent.id);
+                    const paperCount = papers.filter(p => {
+                      const allowedIds = new Set([parent.id, ...children.map(c => c.id)]);
+                      return p.themes.some(tid => allowedIds.has(tid));
+                    }).length;
+                    return (
+                      <div key={parent.id}>
+                        <div className="group flex items-center">
+                          {editingThemeId === parent.id ? (
+                            <div className="flex-1 flex items-center gap-1 px-1">
+                              <input
+                                type="text"
+                                value={editingThemeValue}
+                                onChange={e => setEditingThemeValue(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') {
+                                    if (renameTheme(parent.id, editingThemeValue)) {
+                                      setEditingThemeId(null);
+                                    }
+                                  }
+                                  if (e.key === 'Escape') setEditingThemeId(null);
+                                }}
+                                onBlur={() => {
+                                  if (renameTheme(parent.id, editingThemeValue)) {
+                                    setEditingThemeId(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="flex-1 text-sm bg-white border border-indigo-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+                              />
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setSelectedTheme(parent.id)}
+                              className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors border-l-4 ${
+                                selectedTheme === parent.id
+                                  ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-600 shadow-sm'
+                                  : 'text-slate-600 hover:bg-slate-100 border-transparent'
+                              }`}
+                            >
+                              {parent.name}
+                            </button>
+                          )}
+                          {editingThemeId !== parent.id && (
+                            <div className="hidden group-hover:flex items-center gap-0.5 pr-1">
+                              <button
+                                onClick={() => { setEditingThemeId(parent.id); setEditingThemeValue(parent.name); }}
+                                className="p-1 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"
+                                title="Rename theme"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => setAddingSubThemeParentId(parent.id)}
+                                className="p-1 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"
+                                title="Add sub-theme"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => setPendingDeleteThemeId(parent.id)}
+                                className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
+                                title="Delete theme"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {children.map(child => (
+                          <div key={child.id} className="group flex items-center ml-4">
+                            {editingThemeId === child.id ? (
+                              <div className="flex-1 flex items-center gap-1 px-1">
+                                <input
+                                  type="text"
+                                  value={editingThemeValue}
+                                  onChange={e => setEditingThemeValue(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      if (renameTheme(child.id, editingThemeValue)) {
+                                        setEditingThemeId(null);
+                                      }
+                                    }
+                                    if (e.key === 'Escape') setEditingThemeId(null);
+                                  }}
+                                  onBlur={() => {
+                                    if (renameTheme(child.id, editingThemeValue)) {
+                                      setEditingThemeId(null);
+                                    }
+                                  }}
+                                  autoFocus
+                                  className="flex-1 text-xs bg-white border border-indigo-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+                                />
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setSelectedTheme(child.id)}
+                                className={`flex-1 text-left px-3 py-1.5 rounded-lg text-xs transition-colors border-l-4 ${
+                                  selectedTheme === child.id
+                                    ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-400 shadow-sm'
+                                    : 'text-slate-500 hover:bg-slate-100 border-transparent'
+                                }`}
+                              >
+                                {child.name}
+                              </button>
+                            )}
+                            {editingThemeId !== child.id && (
+                              <div className="hidden group-hover:flex items-center gap-0.5 pr-1">
+                                <button
+                                  onClick={() => { setEditingThemeId(child.id); setEditingThemeValue(child.name); }}
+                                  className="p-1 rounded hover:bg-indigo-100 text-slate-400 hover:text-indigo-600 transition-colors"
+                                  title="Rename theme"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => setPendingDeleteThemeId(child.id)}
+                                  className="p-1 rounded hover:bg-red-100 text-slate-400 hover:text-red-600 transition-colors"
+                                  title="Delete theme"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {addingSubThemeParentId === parent.id && (
+                          <div className="flex items-center gap-1 ml-4 px-1">
+                            <input
+                              type="text"
+                              value={subThemeInput}
+                              onChange={e => setSubThemeInput(e.target.value)}
+                              placeholder="Sub-theme name..."
+                              autoFocus
+                              onKeyDown={e => {
+                                if (e.key === 'Enter' && subThemeInput.trim()) {
+                                  if (addNewTheme(subThemeInput, parent.id)) {
+                                    setSubThemeInput('');
+                                    setAddingSubThemeParentId(null);
+                                  }
+                                }
+                                if (e.key === 'Escape') {
+                                  setSubThemeInput('');
+                                  setAddingSubThemeParentId(null);
+                                }
+                              }}
+                              className="flex-1 text-xs bg-white border border-indigo-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button
+                              onClick={() => {
+                                if (subThemeInput.trim() && addNewTheme(subThemeInput, parent.id)) {
+                                  setSubThemeInput('');
+                                  setAddingSubThemeParentId(null);
+                                }
+                              }}
+                              className="p-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
+                            >
+                              <Check className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => { setSubThemeInput(''); setAddingSubThemeParentId(null); }}
+                              className="p-1 bg-slate-100 text-slate-500 rounded hover:bg-slate-200 transition-colors"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {!addingTopTheme ? (
                     <button
-                      key={theme}
-                      onClick={() => setSelectedTheme(theme)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors border-l-4 ${
-                        selectedTheme === theme 
-                          ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-600 shadow-sm' 
-                          : 'text-slate-600 hover:bg-slate-100 border-transparent'
-                      }`}
+                      onClick={() => setAddingTopTheme(true)}
+                      className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-indigo-600 hover:bg-slate-50 transition-colors flex items-center gap-1.5 border border-dashed border-slate-200"
                     >
-                      {theme}
+                      <Plus className="w-3 h-3" />
+                      Add theme
                     </button>
-                  ))}
+                  ) : (
+                    <div className="flex items-center gap-1 px-1">
+                      <input
+                        type="text"
+                        value={topThemeInput}
+                        onChange={e => setTopThemeInput(e.target.value)}
+                        placeholder="Theme name..."
+                        autoFocus
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && topThemeInput.trim()) {
+                            if (addNewTheme(topThemeInput)) {
+                              setTopThemeInput('');
+                              setAddingTopTheme(false);
+                            }
+                          }
+                          if (e.key === 'Escape') {
+                            setTopThemeInput('');
+                            setAddingTopTheme(false);
+                          }
+                        }}
+                        className="flex-1 text-sm bg-white border border-indigo-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <button
+                        onClick={() => {
+                          if (topThemeInput.trim() && addNewTheme(topThemeInput)) {
+                            setTopThemeInput('');
+                            setAddingTopTheme(false);
+                          }
+                        }}
+                        className="p-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition-colors"
+                      >
+                        <Check className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => { setTopThemeInput(''); setAddingTopTheme(false); }}
+                        className="p-1 bg-slate-100 text-slate-500 rounded hover:bg-slate-200 transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -466,74 +821,139 @@ export default function App() {
             <div className="flex items-center justify-between">
               <h2 className="text-2xl font-bold text-slate-900">
                 {viewMode === 'all'
-                  ? (selectedTheme || "All Papers")
+                  ? (selectedTheme ? getThemeName(selectedTheme) : "All Papers")
                   : reviewStatusFilter === 'included' ? 'Included Papers'
                     : reviewStatusFilter === 'excluded' ? 'Excluded Papers'
                     : 'Unreviewed Papers'
                 }
                 <span className="ml-2 text-slate-400 font-normal text-lg">({filteredPapers.length})</span>
               </h2>
+              <button
+                onClick={() => {
+                  setMultiSelectMode(prev => !prev);
+                  setSelectedPaperIds(new Set());
+                  setLastClickedIndex(null);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                  multiSelectMode
+                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                    : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <ListChecks className="w-4 h-4" />
+                {multiSelectMode ? 'Exit Select' : 'Multi-Select'}
+              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <AnimatePresence mode="popLayout">
-                {filteredPapers.map((paper) => (
-                  <motion.div
-                    key={paper.id}
-                    layout
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    onClick={() => setSelectedPaper(paper)}
-                    className="group bg-white p-6 rounded-2xl border border-slate-200 hover:border-indigo-300 hover:shadow-xl hover:shadow-indigo-500/5 transition-all cursor-pointer flex flex-col h-full"
-                  >
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <div className="px-2 py-1 bg-slate-100 rounded text-[10px] font-bold text-slate-500 uppercase">
-                          {paper.journal} • {paper.year}
-                        </div>
-                        {paper.reviewStatus !== 'unreviewed' && (
-                          <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                            paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                          }`}>
-                            {paper.reviewStatus}
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); cycleStatus(paper.id, paper.reviewStatus); }}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                            paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' :
-                            paper.reviewStatus === 'excluded' ? 'bg-red-100 text-red-600 hover:bg-red-200' :
-                            'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                          }`}
-                          title={`Status: ${paper.reviewStatus}. Click to cycle.`}
+                {filteredPapers.map((paper, index) => {
+                  const isSelected = selectedPaperIds.has(paper.id);
+                  return (
+                    <motion.div
+                      key={paper.id}
+                      layout
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      onClick={() => {
+                        if (multiSelectMode) {
+                          const newSet = new Set(selectedPaperIds);
+                          if (newSet.has(paper.id)) newSet.delete(paper.id);
+                          else newSet.add(paper.id);
+                          setSelectedPaperIds(newSet);
+                          setLastClickedIndex(index);
+                        } else {
+                          setSelectedPaper(paper);
+                        }
+                      }}
+                      className={`group bg-white p-6 rounded-2xl border transition-all cursor-pointer flex flex-col h-full relative ${
+                        isSelected
+                          ? 'border-indigo-500 bg-indigo-50/30 shadow-lg shadow-indigo-500/10'
+                          : 'border-slate-200 hover:border-indigo-300 hover:shadow-xl hover:shadow-indigo-500/5'
+                      }`}
+                    >
+                      {multiSelectMode && (
+                        <div
+                          className="absolute top-1 left-1 z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newSet = new Set(selectedPaperIds);
+                            if (e.shiftKey && lastClickedIndex !== null) {
+                              const start = Math.min(lastClickedIndex, index);
+                              const end = Math.max(lastClickedIndex, index);
+                              const shouldSelect = !selectedPaperIds.has(paper.id);
+                              for (let i = start; i <= end; i++) {
+                                if (shouldSelect) newSet.add(filteredPapers[i].id);
+                                else newSet.delete(filteredPapers[i].id);
+                              }
+                            } else {
+                              if (newSet.has(paper.id)) newSet.delete(paper.id);
+                              else newSet.add(paper.id);
+                            }
+                            setSelectedPaperIds(newSet);
+                            setLastClickedIndex(index);
+                          }}
                         >
-                          {paper.reviewStatus === 'included' ? <Check className="w-4 h-4" /> :
-                           paper.reviewStatus === 'excluded' ? <Ban className="w-4 h-4" /> :
-                           <CircleDot className="w-4 h-4" />}
-                        </button>
-                        <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                          <ArrowRight className="w-4 h-4" />
+                          {isSelected
+                            ? <CheckSquare className="w-5 h-5 text-indigo-600" />
+                            : <Square className="w-5 h-5 text-slate-300 hover:text-indigo-400 transition-colors" />
+                          }
+                        </div>
+                      )}
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="px-2 py-1 bg-slate-100 rounded text-[10px] font-bold text-slate-500 uppercase">
+                            {paper.journal} &bull; {paper.year}
+                          </div>
+                          {paper.reviewStatus !== 'unreviewed' && (
+                            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                              paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {paper.reviewStatus}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); cycleStatus(paper.id, paper.reviewStatus); }}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
+                              paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' :
+                              paper.reviewStatus === 'excluded' ? 'bg-red-100 text-red-600 hover:bg-red-200' :
+                              'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                            }`}
+                            title={`Status: ${paper.reviewStatus}. Click to cycle.`}
+                          >
+                            {paper.reviewStatus === 'included' ? <Check className="w-4 h-4" /> :
+                             paper.reviewStatus === 'excluded' ? <Ban className="w-4 h-4" /> :
+                             <CircleDot className="w-4 h-4" />}
+                          </button>
+                          {!multiSelectMode && (
+                            <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                              <ArrowRight className="w-4 h-4" />
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-900 group-hover:text-indigo-600 transition-colors mb-3 line-clamp-2">
-                      {paper.title}
-                    </h3>
-                    <p className="text-sm text-slate-500 line-clamp-3 mb-4 flex-grow">
-                      {paper.abstract}
-                    </p>
-                    <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-100">
-                      {paper.themes.slice(0, 2).map((t) => (
-                        <span key={t} className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-medium">
-                          {t.replace("LLM-based MAS in ", "").replace("LLM-based ", "")}
-                        </span>
-                      ))}
-                    </div>
-                  </motion.div>
-                ))}
+                      <h3 className="text-lg font-bold text-slate-900 group-hover:text-indigo-600 transition-colors mb-3 line-clamp-2">
+                        {paper.title}
+                      </h3>
+                      <p className="text-sm text-slate-500 line-clamp-3 mb-4 flex-grow">
+                        {paper.abstract}
+                      </p>
+                      <div className="flex flex-wrap gap-2 pt-4 border-t border-slate-100">
+                        {paper.themes.slice(0, 2).map((t) => {
+                          const name = getThemeName(t);
+                          return (
+                            <span key={t} className="text-[10px] px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-medium">
+                              {name.replace("LLM-based MAS in ", "").replace("LLM-based ", "")}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
             
@@ -725,11 +1145,11 @@ export default function App() {
                     {selectedPaper.themes.map(t => (
                       <div key={t} className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 pl-3 pr-1.5 py-1 rounded-full text-xs font-medium text-indigo-700">
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                        {t}
+                        {getThemeName(t)}
                         <button
                           onClick={() => removeThemeFromPaper(selectedPaper.id, t)}
                           className="w-4 h-4 rounded-full hover:bg-indigo-200 flex items-center justify-center transition-colors"
-                          title={`Remove "${t}"`}
+                          title={`Remove "${getThemeName(t)}"`}
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -747,16 +1167,18 @@ export default function App() {
                       </button>
                       {themeDropdownOpen && (
                         <div className="absolute top-full left-0 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto">
-                          {themes.filter(t => !selectedPaper.themes.includes(t)).length === 0 && (
+                          {themes.filter(t => !selectedPaper.themes.includes(t.id)).length === 0 && (
                             <div className="px-3 py-2 text-xs text-slate-400 italic">All themes assigned</div>
                           )}
-                          {themes.filter(t => !selectedPaper.themes.includes(t)).map(t => (
+                          {themes.filter(t => !selectedPaper.themes.includes(t.id)).map(t => (
                             <button
-                              key={t}
-                              onClick={() => { addThemeToPaper(selectedPaper.id, t); setThemeDropdownOpen(false); }}
-                              className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+                              key={t.id}
+                              onClick={() => { addThemeToPaper(selectedPaper.id, t.id); setThemeDropdownOpen(false); }}
+                              className={`w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors ${
+                                t.parentId ? 'pl-6' : ''
+                              }`}
                             >
-                              {t}
+                              {t.parentId ? `\u21B3 ${t.name}` : t.name}
                             </button>
                           ))}
                         </div>
@@ -1082,6 +1504,213 @@ export default function App() {
             </div>
           ) : null;
         })()}
+      </AnimatePresence>
+
+      {/* Theme Delete Confirmation Dialog */}
+      <AnimatePresence>
+        {pendingDeleteThemeId && (() => {
+          const theme = themes.find(t => t.id === pendingDeleteThemeId);
+          if (!theme) return null;
+          const children = themes.filter(t => t.parentId === pendingDeleteThemeId);
+          const affectedPapers = papers.filter(p => {
+            const ids = new Set([pendingDeleteThemeId, ...children.map(c => c.id)]);
+            return p.themes.some(tid => ids.has(tid));
+          }).length;
+          return (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setPendingDeleteThemeId(null)}
+                className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-red-100 rounded-full">
+                    <Trash2 className="w-5 h-5 text-red-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900">Delete Theme</h3>
+                </div>
+                <p className="text-sm text-slate-600">
+                  Are you sure you want to delete <strong>{theme.name}</strong>?
+                </p>
+                {children.length > 0 && (
+                  <p className="text-xs text-red-700 bg-red-50 px-3 py-2 rounded-lg">
+                    This will also delete {children.length} sub-theme{children.length > 1 ? 's' : ''}: {children.map(c => c.name).join(', ')}
+                  </p>
+                )}
+                <p className="text-xs text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
+                  This will remove the theme{children.length > 0 ? 's' : ''} from {affectedPapers} paper{affectedPapers !== 1 ? 's' : ''}.
+                </p>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setPendingDeleteThemeId(null)}
+                    className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      deleteTheme(pendingDeleteThemeId);
+                      setPendingDeleteThemeId(null);
+                    }}
+                    className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
+                  >
+                    Delete Theme
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* Batch Tag Action Bar */}
+      <AnimatePresence>
+        {multiSelectMode && selectedPaperIds.size > 0 && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-0 left-0 right-0 z-[90] bg-white border-t border-slate-200 shadow-2xl"
+          >
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-slate-900">
+                  {selectedPaperIds.size} selected
+                </span>
+                <button
+                  onClick={() => {
+                    if (selectedPaperIds.size === filteredPapers.length) {
+                      setSelectedPaperIds(new Set());
+                    } else {
+                      setSelectedPaperIds(new Set(filteredPapers.map(p => p.id)));
+                    }
+                  }}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  {selectedPaperIds.size === filteredPapers.length ? 'Deselect all' : 'Select all'}
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedPaperIds(new Set());
+                    setLastClickedIndex(null);
+                  }}
+                  className="text-xs text-slate-500 hover:text-slate-700 font-medium"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      setBatchTagDropdownOpen(!batchTagDropdownOpen);
+                      setBatchRemoveDropdownOpen(false);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+                  >
+                    <Tag className="w-3.5 h-3.5" />
+                    Add Tag
+                  </button>
+                  {batchTagDropdownOpen && (
+                    <div className="absolute bottom-full right-0 mb-2 w-56 bg-white border border-slate-200 rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto">
+                      {allTags.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-slate-400 italic">No tags exist yet</div>
+                      )}
+                      {allTags.map(t => (
+                        <button
+                          key={t}
+                          onClick={() => {
+                            batchAddTag([...selectedPaperIds], t);
+                            setBatchTagDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={batchNewTagInput}
+                    onChange={e => setBatchNewTagInput(e.target.value)}
+                    placeholder="New tag..."
+                    className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs focus:ring-2 focus:ring-indigo-500 outline-none w-32"
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && batchNewTagInput.trim()) {
+                        addNewTag(batchNewTagInput);
+                        batchAddTag([...selectedPaperIds], batchNewTagInput.trim());
+                        setBatchNewTagInput('');
+                      }
+                      if (e.key === 'Escape') {
+                        setBatchNewTagInput('');
+                      }
+                    }}
+                  />
+                  {batchNewTagInput.trim() && (
+                    <button
+                      onClick={() => {
+                        addNewTag(batchNewTagInput);
+                        batchAddTag([...selectedPaperIds], batchNewTagInput.trim());
+                        setBatchNewTagInput('');
+                      }}
+                      className="px-2 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition-colors"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {(() => {
+                  const ids = [...selectedPaperIds];
+                  const sharedTags = allTags.filter(tag =>
+                    ids.some(id => papers.find(p => p.id === id)?.tags.includes(tag))
+                  );
+                  if (sharedTags.length === 0) return null;
+                  return (
+                    <div className="relative">
+                      <button
+                        onClick={() => {
+                          setBatchRemoveDropdownOpen(!batchRemoveDropdownOpen);
+                          setBatchTagDropdownOpen(false);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Remove Tag
+                      </button>
+                      {batchRemoveDropdownOpen && (
+                        <div className="absolute bottom-full right-0 mb-2 w-56 bg-white border border-slate-200 rounded-xl shadow-lg z-10 max-h-48 overflow-y-auto">
+                          {sharedTags.map(t => (
+                            <button
+                              key={t}
+                              onClick={() => {
+                                batchRemoveTag([...selectedPaperIds], t);
+                                setBatchRemoveDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-red-50 hover:text-red-700 transition-colors"
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Background Decor */}
