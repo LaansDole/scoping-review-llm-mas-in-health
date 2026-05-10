@@ -1,5 +1,17 @@
 export type ReviewStatus = "included" | "excluded" | "unreviewed";
 
+export interface ChatConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+  timestamp?: number;
+}
+
 export interface Theme {
   id: string;
   name: string;

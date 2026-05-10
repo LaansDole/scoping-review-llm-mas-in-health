@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect, Fragment } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
@@ -27,12 +29,19 @@ import {
   ArrowLeft,
   ListChecks,
   CheckSquare,
-  Square
+  Square,
+  MessageSquare,
+  Send,
+  Settings,
+  Loader2,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { PAPERS as INITIAL_PAPERS, THEMES as INITIAL_THEMES, Paper, Theme } from './data';
-import type { ReviewStatus } from './types';
+import type { ReviewStatus, ChatConfig, ChatMessage } from './types';
 import { parseCsvFile } from './csvParser';
 import { parseRisFile } from './risParser';
+import { loadChatConfig, saveChatConfig, buildSystemPrompt, streamChatCompletion } from './chatApi';
 
 const STORAGE_KEYS = { papers: 'mas-health-papers', themes: 'mas-health-themes', tags: 'mas-health-tags' } as const;
 
@@ -131,6 +140,15 @@ export default function App() {
   const [batchNewTagInput, setBatchNewTagInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false);
+  const [chatConfig, setChatConfig] = useState<ChatConfig>(loadChatConfig);
+  const [chatPanelSize, setChatPanelSize] = useState<"compact" | "expanded" | "full">("compact");
+  const chatMessagesEndRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     setSelectedPaperIds(new Set());
     setLastClickedIndex(null);
@@ -147,6 +165,18 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.tags, JSON.stringify(allTags));
   }, [allTags]);
+
+  useEffect(() => {
+    if (chatOpen) {
+      setChatMessages([]);
+      setChatInput("");
+      setChatPanelSize("compact");
+    }
+  }, [chatOpen]);
+
+  useEffect(() => {
+    chatMessagesEndRef.current?.scrollIntoView();
+  }, [chatMessages]);
 
   const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -408,6 +438,116 @@ export default function App() {
     return themes.find(t => t.id === id)?.name || id;
   }, [themes]);
 
+  const paperMap = useMemo(() => new Map(papers.map(p => [p.id, p])), [papers]);
+
+  const handleChatSend = useCallback(async (messageText: string) => {
+    const text = messageText.trim();
+    if (!text || isStreaming) return;
+    if (!chatConfig.apiKey) {
+      setChatMessages(prev => [...prev,
+        { role: "user", content: text, timestamp: Date.now() },
+        { role: "assistant", content: "Please configure your API settings first. Click the gear icon in the chat header to set up your API key, base URL, and model.", timestamp: Date.now() },
+      ]);
+      return;
+    }
+
+    const userMsg: ChatMessage = { role: "user", content: text, timestamp: Date.now() };
+    const updatedMessages = [...chatMessages, userMsg];
+    setChatMessages(updatedMessages);
+    setChatInput("");
+    setIsStreaming(true);
+
+    const systemMsg: ChatMessage = {
+      role: "system",
+      content: buildSystemPrompt(papers, themes),
+    };
+    const apiMessages = [systemMsg, ...updatedMessages];
+
+    let fullResponse = "";
+    setChatMessages(prev => [...prev, { role: "assistant", content: "", timestamp: Date.now() }]);
+
+    await streamChatCompletion(
+      chatConfig,
+      apiMessages,
+      (token) => {
+        fullResponse += token;
+        setChatMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: "assistant", content: fullResponse, timestamp: Date.now() };
+          return next;
+        });
+      },
+      () => {
+        setIsStreaming(false);
+      },
+      (error) => {
+        setChatMessages(prev => {
+          const next = [...prev];
+          next[next.length - 1] = { role: "assistant", content: `Error: ${error}`, timestamp: Date.now() };
+          return next;
+        });
+        setIsStreaming(false);
+      }
+    );
+  }, [chatMessages, chatConfig, isStreaming, papers, themes]);
+
+  const PAPER_REF_REGEX = /\{\{paper:([^}]+)\}\}/g;
+
+  const renderAssistantContent = useCallback((content: string) => {
+    const segments: { type: "text" | "paper"; value: string }[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    const regex = new RegExp(PAPER_REF_REGEX.source, "g");
+
+    while ((match = regex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push({ type: "text", value: content.slice(lastIndex, match.index) });
+      }
+      segments.push({ type: "paper", value: match[1] });
+      lastIndex = regex.lastIndex;
+    }
+
+    if (lastIndex < content.length) {
+      segments.push({ type: "text", value: content.slice(lastIndex) });
+    }
+
+    return segments.map((seg, i) => {
+      if (seg.type === "paper") {
+        const paper = paperMap.get(seg.value);
+        if (!paper) return <Fragment key={i}>{`{{paper:${seg.value}}}`}</Fragment>;
+        return (
+          <button
+            key={i}
+            onClick={() => setSelectedPaper(paper)}
+            className="block w-full text-left my-2 p-3 bg-white border border-indigo-200 rounded-xl hover:border-indigo-400 hover:shadow-md transition-all group"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 transition-colors line-clamp-2">
+                {paper.title}
+              </span>
+              <ArrowRight className="w-4 h-4 shrink-0 mt-0.5 text-slate-400 group-hover:text-indigo-600 transition-colors" />
+            </div>
+            <div className="flex items-center gap-2 mt-1.5">
+              <span className="text-xs text-slate-500">{paper.year}</span>
+              <span className="text-slate-300">|</span>
+              {paper.themes.slice(0, 2).map(tid => (
+                <span key={tid} className="text-[10px] px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded-full font-medium">
+                  {getThemeName(tid).replace("LLM-based MAS in ", "").replace("LLM-based ", "")}
+                </span>
+              ))}
+            </div>
+          </button>
+        );
+      }
+
+      return (
+        <div key={i} className="chat-markdown prose-sm">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.value}</ReactMarkdown>
+        </div>
+      );
+    });
+  }, [paperMap, getThemeName]);
+
   const filteredPapers = useMemo(() => {
     return papers.filter(paper => {
       const matchesSearch = paper.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -458,6 +598,14 @@ export default function App() {
               />
             </div>
             <input ref={fileInputRef} type="file" accept=".csv,.ris" onChange={handleFileImport} className="hidden" />
+            <button
+              onClick={() => setChatOpen(prev => !prev)}
+              className={`flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium transition-colors shadow-sm ${chatOpen ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
+              title="Toggle Chat"
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Chat</span>
+            </button>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-full text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
@@ -1718,6 +1866,183 @@ export default function App() {
         <div className="absolute -top-24 -left-24 w-96 h-96 bg-indigo-100/50 blur-3xl rounded-full" />
         <div className="absolute top-1/2 -right-24 w-64 h-64 bg-indigo-50/50 blur-3xl rounded-full" />
       </div>
+
+      {/* Chat Panel */}
+      {chatOpen && (
+        <>
+          <div
+            onClick={() => setChatOpen(false)}
+            className="fixed inset-0 z-[80] bg-slate-900/20 backdrop-blur-sm"
+          />
+          <div
+            className={`fixed top-0 right-0 z-[90] h-full bg-white shadow-2xl flex flex-col transition-all duration-300 ${
+              chatPanelSize === "full" ? "w-full" : chatPanelSize === "expanded" ? "w-full max-w-2xl" : "w-full max-w-md"
+            }`}
+          >
+              {/* Chat Header */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-5 h-5 text-indigo-600" />
+                  <h2 className="text-sm font-bold text-slate-900">Research Chat</h2>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setChatPanelSize(prev => prev === "compact" ? "expanded" : prev === "expanded" ? "full" : "compact")}
+                    className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
+                    title={chatPanelSize === "compact" ? "Expand" : chatPanelSize === "expanded" ? "Full screen" : "Compact"}
+                  >
+                    {chatPanelSize === "full" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={() => setChatSettingsOpen(prev => !prev)}
+                    className={`p-1.5 rounded-lg transition-colors ${chatSettingsOpen ? "bg-indigo-100 text-indigo-600" : "text-slate-400 hover:bg-slate-200 hover:text-slate-600"}`}
+                    title="API Settings"
+                  >
+                    <Settings className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setChatOpen(false)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Settings Panel */}
+              <AnimatePresence>
+                {chatSettingsOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden border-b border-slate-200"
+                  >
+                    <div className="p-4 space-y-3 bg-slate-50">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Base URL</label>
+                        <input
+                          type="text"
+                          value={chatConfig.baseUrl}
+                          onChange={e => {
+                            const next = { ...chatConfig, baseUrl: e.target.value };
+                            setChatConfig(next);
+                            saveChatConfig(next);
+                          }}
+                          className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                          placeholder="https://api.deepseek.com"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">API Key</label>
+                        <input
+                          type="password"
+                          value={chatConfig.apiKey}
+                          onChange={e => {
+                            const next = { ...chatConfig, apiKey: e.target.value };
+                            setChatConfig(next);
+                            saveChatConfig(next);
+                          }}
+                          className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                          placeholder="sk-..."
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Model</label>
+                        <input
+                          type="text"
+                          value={chatConfig.model}
+                          onChange={e => {
+                            const next = { ...chatConfig, model: e.target.value };
+                            setChatConfig(next);
+                            saveChatConfig(next);
+                          }}
+                          className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                          placeholder="deepseek-chat"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-400 pt-1">Defaults from .env file. UI overrides are saved in localStorage.</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Chat Messages */}
+              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+                {chatMessages.length === 0 && (
+                  <div className="text-center py-8">
+                    <MessageSquare className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                    <p className="text-sm text-slate-500 mb-4">Ask about papers, themes, or tags</p>
+                    <div className="flex flex-wrap gap-2 justify-center">
+                      {[
+                        "Find papers about mental health",
+                        "What are the main themes?",
+                        "Suggest tags for my research",
+                      ].map((prompt) => (
+                        <button
+                          key={prompt}
+                          onClick={() => handleChatSend(prompt)}
+                          className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium hover:bg-indigo-100 transition-colors border border-indigo-200"
+                        >
+                          {prompt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {chatMessages.map((msg, i) => (
+                  <div
+                    key={i}
+                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-indigo-600 text-white"
+                          : msg.content.startsWith("Error:")
+                            ? "bg-red-50 text-red-700 border border-red-200"
+                            : "bg-slate-100 text-slate-800"
+                      }`}
+                    >
+                      {msg.role === "assistant" ? renderAssistantContent(msg.content) : msg.content}
+                      {msg.role === "assistant" && !msg.content && isStreaming && (
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+                ))}
+                <div ref={chatMessagesEndRef} />
+              </div>
+
+              {/* Chat Input */}
+              <div className="p-3 border-t border-slate-200 bg-white">
+                <div className="flex items-end gap-2">
+                  <textarea
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleChatSend(chatInput);
+                      }
+                    }}
+                    placeholder="Ask about papers..."
+                    disabled={isStreaming}
+                    rows={1}
+                    className="flex-1 resize-none px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <button
+                    onClick={() => handleChatSend(chatInput)}
+                    disabled={isStreaming || !chatInput.trim()}
+                    className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                  >
+                    <Send className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
