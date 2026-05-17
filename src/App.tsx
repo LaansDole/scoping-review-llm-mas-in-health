@@ -7,17 +7,18 @@ import React, { useState, useMemo, useRef, useCallback, useEffect, Fragment } fr
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Search, 
-  FlaskConical, 
-  ArrowRight, 
-  ExternalLink, 
+import {
+  Search,
+  FlaskConical,
+  ArrowRight,
+  ExternalLink,
   Filter,
   CheckCircle2,
   Info,
   Layers,
   ClipboardList,
   Pencil,
+  Download,
   Upload,
   X,
   Plus,
@@ -35,23 +36,38 @@ import {
   Settings,
   Loader2,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Archive,
+  FolderOpen,
+  Clock,
+  Home,
+  ArchiveRestore
 } from 'lucide-react';
-import { PAPERS as INITIAL_PAPERS, THEMES as INITIAL_THEMES, Paper, Theme } from './data';
-import type { ReviewStatus, ChatConfig, ChatMessage } from './types';
+import type { Paper, Theme, ReviewStatus, ChatConfig, ChatMessage, ResearchProject } from './types';
 import { parseCsvFile } from './csvParser';
 import { parseRisFile } from './risParser';
+import { exportPapersAsCsv } from './csvExporter';
 import { loadChatConfig, saveChatConfig, buildSystemPrompt, streamChatCompletion } from './chatApi';
-
-const STORAGE_KEYS = { papers: 'mas-health-papers', themes: 'mas-health-themes', tags: 'mas-health-tags' } as const;
+import {
+  loadProjectIndex,
+  createProject,
+  archiveProject,
+  restoreProject,
+  renameProject,
+  updateLastOpened,
+  migrateLegacyData,
+  getProjectDataKeys,
+  getProjectPaperCount,
+} from './projectStore';
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-function loadPapers(): Paper[] {
+function loadPapersForProject(projectId: string): Paper[] {
+  const keys = getProjectDataKeys(projectId);
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.papers);
+    const saved = localStorage.getItem(keys.papers);
     if (saved) {
       const papers: Paper[] = JSON.parse(saved).map((p: Paper) => ({ ...p, tags: p.tags ?? [] }));
       const needsMigration = papers.length > 0 && papers[0].themes.length > 0 &&
@@ -64,47 +80,52 @@ function loadPapers(): Paper[] {
       }
       return papers;
     }
-  } catch {}
-  return INITIAL_PAPERS;
+  } catch { }
+  return [];
 }
 
-function loadThemes(): Theme[] {
+function loadThemesForProject(projectId: string): Theme[] {
+  const keys = getProjectDataKeys(projectId);
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.themes);
+    const saved = localStorage.getItem(keys.themes);
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'object' && 'id' in parsed[0]) {
         return parsed;
       }
       if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'string') {
-        return migrateLegacyThemes(parsed);
+        return parsed.map((name: string) => ({ id: slugify(name), name, parentId: null }));
       }
     }
-  } catch {}
-  return [...INITIAL_THEMES];
+  } catch { }
+  return [];
 }
 
-function migrateLegacyThemes(names: string[]): Theme[] {
-  return names.map(name => ({
-    id: slugify(name),
-    name,
-    parentId: null,
-  }));
-}
-
-function loadTags(papers: Paper[]): string[] {
+function loadTagsForProject(projectId: string, papers: Paper[]): string[] {
+  const keys = getProjectDataKeys(projectId);
   try {
-    const saved = localStorage.getItem(STORAGE_KEYS.tags);
+    const saved = localStorage.getItem(keys.tags);
     if (saved) return JSON.parse(saved);
-  } catch {}
+  } catch { }
   const tags = new Set<string>();
   papers.forEach(p => p.tags.forEach(t => tags.add(t)));
   return [...tags];
 }
 
 export default function App() {
-  const [papers, setPapers] = useState<Paper[]>(loadPapers);
-  const [themes, setThemes] = useState<Theme[]>(loadThemes);
+  const [currentView, setCurrentView] = useState<'projects' | 'workspace'>('projects');
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeProject, setActiveProject] = useState<ResearchProject | null>(null);
+  const [projectIndex, setProjectIndex] = useState<ResearchProject[]>([]);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [renameProjectValue, setRenameProjectValue] = useState("");
+  const [renamingHeader, setRenamingHeader] = useState(false);
+  const [renameHeaderValue, setRenameHeaderValue] = useState("");
+
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [themes, setThemes] = useState<Theme[]>([]);
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
@@ -120,11 +141,14 @@ export default function App() {
   const [customReason, setCustomReason] = useState("");
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [allTags, setAllTags] = useState<string[]>(() => loadTags(loadPapers()));
+  const [allTags, setAllTags] = useState<string[]>([]);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
   const [newTagOpen, setNewTagOpen] = useState(false);
   const [newTagInput, setNewTagInput] = useState("");
+  const [editingTagName, setEditingTagName] = useState<string | null>(null);
+  const [editingTagValue, setEditingTagValue] = useState("");
+  const [pendingDeleteTagName, setPendingDeleteTagName] = useState<string | null>(null);
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
   const [editingThemeValue, setEditingThemeValue] = useState("");
   const [pendingDeleteThemeId, setPendingDeleteThemeId] = useState<string | null>(null);
@@ -149,22 +173,115 @@ export default function App() {
   const [chatPanelSize, setChatPanelSize] = useState<"compact" | "expanded" | "full">("compact");
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
 
+  const isArchived = activeProject?.archived ?? false;
+
+  useEffect(() => {
+    const migrated = migrateLegacyData();
+    let index = loadProjectIndex();
+    if (migrated) {
+      index = loadProjectIndex();
+    }
+    setProjectIndex(index);
+
+    const lastProject = [...index]
+      .filter(p => !p.archived && p.lastOpened)
+      .sort((a, b) => (b.lastOpened ?? '').localeCompare(a.lastOpened ?? ''))[0];
+
+    if (lastProject) {
+      openProject(lastProject.id, index);
+    }
+  }, []);
+
+  const openProject = useCallback((projectId: string, index?: ResearchProject[]) => {
+    const idx = index ?? loadProjectIndex();
+    const project = idx.find(p => p.id === projectId);
+    if (!project) return;
+
+    const updated = updateLastOpened(projectId);
+    setProjectIndex(updated);
+    setActiveProjectId(projectId);
+    setActiveProject(updated.find(p => p.id === projectId) ?? project);
+
+    const loadedPapers = loadPapersForProject(projectId);
+    const loadedThemes = loadThemesForProject(projectId);
+    const loadedTags = loadTagsForProject(projectId, loadedPapers);
+
+    setPapers(loadedPapers);
+    setThemes(loadedThemes);
+    setAllTags(loadedTags);
+    setSelectedTheme(null);
+    setSearchQuery("");
+    setSelectedPaper(null);
+    setViewMode('all');
+    setImportMsg(null);
+    setSelectedPaperIds(new Set());
+    setLastClickedIndex(null);
+    setCurrentView('workspace');
+  }, []);
+
+  const handleCreateProject = useCallback(() => {
+    const name = newProjectName.trim();
+    if (!name) return;
+    const project = createProject(name);
+    setProjectIndex(loadProjectIndex());
+    setNewProjectName("");
+    openProject(project.id);
+  }, [newProjectName, openProject]);
+
+  const handleArchiveProject = useCallback((projectId: string) => {
+    const updated = archiveProject(projectId);
+    setProjectIndex(updated);
+    if (projectId === activeProjectId) {
+      setActiveProject(prev => prev ? { ...prev, archived: true } : prev);
+    }
+  }, [activeProjectId]);
+
+  const handleRestoreProject = useCallback((projectId: string) => {
+    const updated = restoreProject(projectId);
+    setProjectIndex(updated);
+    if (projectId === activeProjectId) {
+      setActiveProject(prev => prev ? { ...prev, archived: false } : prev);
+    }
+  }, [activeProjectId]);
+
+  const handleRenameProject = useCallback((projectId: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const updated = renameProject(projectId, trimmed);
+    setProjectIndex(updated);
+    if (projectId === activeProjectId) {
+      setActiveProject(prev => prev ? { ...prev, name: trimmed } : prev);
+    }
+    setRenamingProjectId(null);
+    setRenamingHeader(false);
+  }, [activeProjectId]);
+
+  const goToProjects = useCallback(() => {
+    setCurrentView('projects');
+  }, []);
+
   useEffect(() => {
     setSelectedPaperIds(new Set());
     setLastClickedIndex(null);
   }, [viewMode, selectedTheme, selectedTag, searchQuery, reviewStatusFilter]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.papers, JSON.stringify(papers));
-  }, [papers]);
+    if (!activeProjectId) return;
+    const keys = getProjectDataKeys(activeProjectId);
+    localStorage.setItem(keys.papers, JSON.stringify(papers));
+  }, [papers, activeProjectId]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.themes, JSON.stringify(themes));
-  }, [themes]);
+    if (!activeProjectId) return;
+    const keys = getProjectDataKeys(activeProjectId);
+    localStorage.setItem(keys.themes, JSON.stringify(themes));
+  }, [themes, activeProjectId]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.tags, JSON.stringify(allTags));
-  }, [allTags]);
+    if (!activeProjectId) return;
+    const keys = getProjectDataKeys(activeProjectId);
+    localStorage.setItem(keys.tags, JSON.stringify(allTags));
+  }, [allTags, activeProjectId]);
 
   useEffect(() => {
     if (chatOpen) {
@@ -223,6 +340,10 @@ export default function App() {
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
     setTimeout(() => setImportMsg(null), 5000);
+  }, [papers, themes]);
+
+  const handleExport = useCallback(() => {
+    exportPapersAsCsv(papers, themes);
   }, [papers, themes]);
 
   const EXCLUSION_REASONS = ['Not LLM-based MAS', 'Duplicate paper', 'Full text unavailable', 'Not primary research'] as const;
@@ -401,6 +522,31 @@ export default function App() {
     setAllTags(prev => [...prev, trimmed]);
   }, [allTags]);
 
+  const renameTag = useCallback((oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) { setEditingTagName(null); return; }
+    if (allTags.includes(trimmed)) { setEditingTagName(null); return; }
+    setAllTags(prev => prev.map(t => t === oldName ? trimmed : t));
+    setPapers(prev => prev.map(p => ({
+      ...p,
+      tags: p.tags.map(t => t === oldName ? trimmed : t),
+    })));
+    setSelectedPaper(prev => prev ? { ...prev, tags: prev.tags.map(t => t === oldName ? trimmed : t) } : prev);
+    if (selectedTag === oldName) setSelectedTag(trimmed);
+    setEditingTagName(null);
+  }, [allTags, selectedTag]);
+
+  const deleteTag = useCallback((tagName: string) => {
+    setAllTags(prev => prev.filter(t => t !== tagName));
+    setPapers(prev => prev.map(p => ({
+      ...p,
+      tags: p.tags.filter(t => t !== tagName),
+    })));
+    setSelectedPaper(prev => prev ? { ...prev, tags: prev.tags.filter(t => t !== tagName) } : prev);
+    if (selectedTag === tagName) setSelectedTag(null);
+    setPendingDeleteTagName(null);
+  }, [selectedTag]);
+
   const batchAddTag = useCallback((paperIds: string[], tag: string) => {
     setPapers(prev => prev.map(p => {
       if (!paperIds.includes(p.id) || p.tags.includes(tag)) return p;
@@ -445,8 +591,8 @@ export default function App() {
     if (!text || isStreaming) return;
     if (!chatConfig.apiKey) {
       setChatMessages(prev => [...prev,
-        { role: "user", content: text, timestamp: Date.now() },
-        { role: "assistant", content: "Please configure your API settings first. Click the gear icon in the chat header to set up your API key, base URL, and model.", timestamp: Date.now() },
+      { role: "user", content: text, timestamp: Date.now() },
+      { role: "assistant", content: "Please configure your API settings first. Click the gear icon in the chat header to set up your API key, base URL, and model.", timestamp: Date.now() },
       ]);
       return;
     }
@@ -550,9 +696,9 @@ export default function App() {
 
   const filteredPapers = useMemo(() => {
     return papers.filter(paper => {
-      const matchesSearch = paper.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                           paper.abstract.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           paper.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesSearch = paper.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        paper.abstract.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        paper.authors.some(a => a.toLowerCase().includes(searchQuery.toLowerCase()));
       if (viewMode === 'all') {
         let matchesTheme = true;
         if (selectedTheme) {
@@ -573,25 +719,247 @@ export default function App() {
     unreviewed: papers.filter(p => p.reviewStatus === 'unreviewed').length,
   }), [papers]);
 
+  if (currentView === 'projects') {
+    const activeProjects = projectIndex.filter(p => !p.archived);
+    const archivedProjects = projectIndex.filter(p => p.archived);
+
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] text-[#0F172A] font-sans selection:bg-indigo-100">
+        <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="bg-indigo-600 p-2 rounded-lg">
+                <FlaskConical className="w-5 h-5 text-white" />
+              </div>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900 border-l-2 border-slate-200 pl-3">
+                Full-text Review <span className="font-normal text-slate-500">Explorer</span>
+              </h1>
+            </div>
+          </div>
+        </header>
+
+        <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">Your Research Projects</h2>
+            <p className="text-slate-500">Create a new project or continue working on an existing one.</p>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-6 mb-8 shadow-sm">
+            <h3 className="text-lg font-semibold text-slate-800 mb-4">New Project</h3>
+            <div className="flex gap-3">
+              <input
+                type="text"
+                placeholder="Enter project name..."
+                className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreateProject()}
+              />
+              <button
+                onClick={handleCreateProject}
+                disabled={!newProjectName.trim()}
+                className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Plus className="w-4 h-4" />
+                Create
+              </button>
+            </div>
+          </div>
+
+          {activeProjects.length > 0 && (
+            <div className="mb-8">
+              <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-4">Active Projects</h3>
+              <div className="space-y-3">
+                {activeProjects.map(project => (
+                  <div
+                    key={project.id}
+                    className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer group"
+                    onClick={() => {
+                      if (renamingProjectId === project.id) return;
+                      openProject(project.id);
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3">
+                          <FolderOpen className="w-5 h-5 text-indigo-500 flex-shrink-0" />
+                          {renamingProjectId === project.id ? (
+                            <input
+                              type="text"
+                              className="text-base font-semibold text-slate-900 bg-indigo-50 border border-indigo-300 rounded px-2 py-0.5 flex-1 min-w-0 focus:ring-2 focus:ring-indigo-500"
+                              value={renameProjectValue}
+                              onChange={(e) => setRenameProjectValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleRenameProject(project.id, renameProjectValue);
+                                if (e.key === 'Escape') setRenamingProjectId(null);
+                              }}
+                              onBlur={() => handleRenameProject(project.id, renameProjectValue)}
+                              onClick={(e) => e.stopPropagation()}
+                              autoFocus
+                            />
+                          ) : (
+                            <h4 className="text-base font-semibold text-slate-900 truncate">{project.name}</h4>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 mt-2 ml-8 text-xs text-slate-400">
+                          <span className="flex items-center gap-1">
+                            <ClipboardList className="w-3.5 h-3.5" />
+                            {getProjectPaperCount(project.id)} papers
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            {project.lastOpened
+                              ? `Last opened ${new Date(project.lastOpened).toLocaleDateString()}`
+                              : `Created ${new Date(project.createdAt).toLocaleDateString()}`}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenamingProjectId(project.id);
+                            setRenameProjectValue(project.name);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Rename project"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Rename
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleArchiveProject(project.id); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                          title="Archive project"
+                        >
+                          <Archive className="w-3.5 h-3.5" />
+                          Archive
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {archivedProjects.length > 0 && (
+            <div>
+              <button
+                onClick={() => setShowArchived(prev => !prev)}
+                className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-700 mb-4"
+              >
+                <Archive className="w-4 h-4" />
+                Archived Projects ({archivedProjects.length})
+                <span className="text-xs">{showArchived ? '-' : '+'}</span>
+              </button>
+              {showArchived && (
+                <div className="space-y-3">
+                  {archivedProjects.map(project => (
+                    <div
+                      key={project.id}
+                      className="bg-slate-50 rounded-xl border border-slate-200 p-5 shadow-sm hover:border-slate-300 transition-all cursor-pointer opacity-75 hover:opacity-100"
+                      onClick={() => openProject(project.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3">
+                            <Archive className="w-5 h-5 text-slate-400 flex-shrink-0" />
+                            <h4 className="text-base font-semibold text-slate-600 truncate">{project.name}</h4>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 bg-slate-200 px-2 py-0.5 rounded-full">Archived</span>
+                          </div>
+                          <div className="flex items-center gap-4 mt-2 ml-8 text-xs text-slate-400">
+                            <span className="flex items-center gap-1">
+                              <ClipboardList className="w-3.5 h-3.5" />
+                              {getProjectPaperCount(project.id)} papers
+                            </span>
+                            <span>Created {new Date(project.createdAt).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleRestoreProject(project.id); }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Restore project"
+                        >
+                          <ArchiveRestore className="w-3.5 h-3.5" />
+                          Restore
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {projectIndex.length === 0 && (
+            <div className="text-center py-16">
+              <FolderOpen className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+              <p className="text-slate-400 text-lg">No projects yet. Create your first research project above.</p>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-[#0F172A] font-sans selection:bg-indigo-100">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <button
+              onClick={goToProjects}
+              className="flex items-center gap-2 text-slate-500 hover:text-indigo-600 transition-colors"
+              title="Back to projects"
+            >
+              <Home className="w-5 h-5" />
+            </button>
             <div className="bg-indigo-600 p-2 rounded-lg">
               <FlaskConical className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 border-l-2 border-slate-200 pl-3">
-              MAS-Health <span className="font-normal text-slate-500">Explorer</span>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 border-l-2 border-slate-200 pl-3 flex items-center gap-2">
+              {renamingHeader ? (
+                <input
+                  type="text"
+                  className="text-xl font-bold text-slate-900 bg-indigo-50 border border-indigo-300 rounded px-2 py-0.5 focus:ring-2 focus:ring-indigo-500"
+                  value={renameHeaderValue}
+                  onChange={(e) => setRenameHeaderValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRenameProject(activeProjectId!, renameHeaderValue);
+                    if (e.key === 'Escape') setRenamingHeader(false);
+                  }}
+                  onBlur={() => handleRenameProject(activeProjectId!, renameHeaderValue)}
+                  autoFocus
+                />
+              ) : (
+                <>
+                  {activeProject?.name ?? 'Project'}
+                  <button
+                    onClick={() => {
+                      setRenamingHeader(true);
+                      setRenameHeaderValue(activeProject?.name ?? '');
+                    }}
+                    className="text-slate-400 hover:text-indigo-600 transition-colors"
+                    title="Rename project"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+              <span className="font-normal text-slate-500">Explorer</span>
             </h1>
+            {isArchived && (
+              <span className="text-[10px] uppercase font-bold tracking-wider text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">Archived (Read-only)</span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="relative hidden sm:block">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input 
-                type="text" 
-                placeholder="Search research..." 
+              <input
+                type="text"
+                placeholder="Search research..."
                 className="pl-10 pr-4 py-2 bg-slate-100 border-none rounded-full text-sm focus:ring-2 focus:ring-indigo-500 transition-all w-64"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -607,12 +975,22 @@ export default function App() {
               <span className="hidden sm:inline">Chat</span>
             </button>
             <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-full text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+              onClick={handleExport}
+              disabled={papers.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-white text-slate-600 border border-slate-200 rounded-full text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <Upload className="w-4 h-4" />
-              Import
+              <Download className="w-4 h-4" />
+              Export
             </button>
+            {!isArchived && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-full text-sm font-medium hover:bg-indigo-700 transition-colors shadow-sm"
+              >
+                <Upload className="w-4 h-4" />
+                Import
+              </button>
+            )}
           </div>
         </div>
         {importMsg && (
@@ -624,7 +1002,7 @@ export default function App() {
 
       <main className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 ${multiSelectMode && selectedPaperIds.size > 0 ? 'pb-24' : ''}`}>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          
+
           {/* Sidebar Filters */}
           <aside className="lg:col-span-1 space-y-6">
             {/* View Mode Selector */}
@@ -635,17 +1013,15 @@ export default function App() {
               <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
                 <button
                   onClick={() => setViewMode('all')}
-                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    viewMode === 'all' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${viewMode === 'all' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   All Papers
                 </button>
                 <button
                   onClick={() => setViewMode('review')}
-                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    viewMode === 'review' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${viewMode === 'review' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
                 >
                   Full-Text Review
                 </button>
@@ -662,9 +1038,8 @@ export default function App() {
                 <div className="space-y-1">
                   <button
                     onClick={() => setSelectedTheme(null)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                      !selectedTheme ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${!selectedTheme ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
+                      }`}
                   >
                     All Research
                   </button>
@@ -703,11 +1078,10 @@ export default function App() {
                           ) : (
                             <button
                               onClick={() => setSelectedTheme(parent.id)}
-                              className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors border-l-4 ${
-                                selectedTheme === parent.id
+                              className={`flex-1 text-left px-3 py-2 rounded-lg text-sm transition-colors border-l-4 ${selectedTheme === parent.id
                                   ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-600 shadow-sm'
                                   : 'text-slate-600 hover:bg-slate-100 border-transparent'
-                              }`}
+                                }`}
                             >
                               {parent.name}
                             </button>
@@ -766,11 +1140,10 @@ export default function App() {
                             ) : (
                               <button
                                 onClick={() => setSelectedTheme(child.id)}
-                                className={`flex-1 text-left px-3 py-1.5 rounded-lg text-xs transition-colors border-l-4 ${
-                                  selectedTheme === child.id
+                                className={`flex-1 text-left px-3 py-1.5 rounded-lg text-xs transition-colors border-l-4 ${selectedTheme === child.id
                                     ? 'bg-indigo-50 text-indigo-700 font-medium border-indigo-400 shadow-sm'
                                     : 'text-slate-500 hover:bg-slate-100 border-transparent'
-                                }`}
+                                  }`}
                               >
                                 {child.name}
                               </button>
@@ -902,25 +1275,66 @@ export default function App() {
                 <div className="space-y-1">
                   <button
                     onClick={() => setSelectedTag(null)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                      !selectedTag ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${!selectedTag ? 'bg-amber-50 text-amber-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
+                      }`}
                   >
                     All Tags
                   </button>
                   {allTags.map((tag) => (
-                    <button
-                      key={tag}
-                      onClick={() => setSelectedTag(tag)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
-                        selectedTag === tag
-                          ? 'bg-amber-50 text-amber-700 font-medium border-l-4 border-amber-600 shadow-sm'
-                          : 'text-slate-600 hover:bg-slate-100 border-l-4 border-transparent'
-                      }`}
-                    >
-                      <span className="truncate">{tag}</span>
-                      <span className="text-xs text-slate-400 ml-2">{papers.filter(p => p.tags.includes(tag)).length}</span>
-                    </button>
+                    <div key={tag} className="group/tag relative">
+                      {editingTagName === tag ? (
+                        <div className="flex items-center gap-1 px-2 py-1">
+                          <input
+                            type="text"
+                            className="flex-1 text-sm bg-white border border-indigo-300 rounded px-2 py-1 focus:ring-2 focus:ring-indigo-500"
+                            value={editingTagValue}
+                            onChange={(e) => setEditingTagValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') renameTag(tag, editingTagValue);
+                              if (e.key === 'Escape') setEditingTagName(null);
+                            }}
+                            onBlur={() => renameTag(tag, editingTagValue)}
+                            autoFocus
+                          />
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setSelectedTag(tag)}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${selectedTag === tag
+                              ? 'bg-amber-50 text-amber-700 font-medium border-l-4 border-amber-600 shadow-sm'
+                              : 'text-slate-600 hover:bg-slate-100 border-l-4 border-transparent'
+                            }`}
+                        >
+                          <span className="truncate">{tag}</span>
+                          <span className="text-xs text-slate-400 ml-2">{papers.filter(p => p.tags.includes(tag)).length}</span>
+                        </button>
+                      )}
+                      {!isArchived && editingTagName !== tag && (
+                        <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover/tag:flex items-center gap-0.5 bg-white rounded shadow-sm border border-slate-200">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingTagName(tag);
+                              setEditingTagValue(tag);
+                            }}
+                            className="p-1 text-slate-400 hover:text-indigo-600 rounded"
+                            title="Rename tag"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingDeleteTagName(tag);
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-600 rounded"
+                            title="Delete tag"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -938,9 +1352,8 @@ export default function App() {
                     <button
                       key={key}
                       onClick={() => setReviewStatusFilter(key)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${
-                        reviewStatusFilter === key ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
-                      }`}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center justify-between ${reviewStatusFilter === key ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-100'
+                        }`}
                     >
                       <span className="flex items-center gap-2">
                         <Icon className={`w-3.5 h-3.5 ${key === 'included' ? 'text-emerald-500' : key === 'excluded' ? 'text-red-400' : ''}`} />
@@ -972,7 +1385,7 @@ export default function App() {
                   ? (selectedTheme ? getThemeName(selectedTheme) : "All Papers")
                   : reviewStatusFilter === 'included' ? 'Included Papers'
                     : reviewStatusFilter === 'excluded' ? 'Excluded Papers'
-                    : 'Unreviewed Papers'
+                      : 'Unreviewed Papers'
                 }
                 <span className="ml-2 text-slate-400 font-normal text-lg">({filteredPapers.length})</span>
               </h2>
@@ -982,11 +1395,10 @@ export default function App() {
                   setSelectedPaperIds(new Set());
                   setLastClickedIndex(null);
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  multiSelectMode
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${multiSelectMode
                     ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
                     : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'
-                }`}
+                  }`}
               >
                 <ListChecks className="w-4 h-4" />
                 {multiSelectMode ? 'Exit Select' : 'Multi-Select'}
@@ -1015,11 +1427,10 @@ export default function App() {
                           setSelectedPaper(paper);
                         }
                       }}
-                      className={`group bg-white p-6 rounded-2xl border transition-all cursor-pointer flex flex-col h-full relative ${
-                        isSelected
+                      className={`group bg-white p-6 rounded-2xl border transition-all cursor-pointer flex flex-col h-full relative ${isSelected
                           ? 'border-indigo-500 bg-indigo-50/30 shadow-lg shadow-indigo-500/10'
                           : 'border-slate-200 hover:border-indigo-300 hover:shadow-xl hover:shadow-indigo-500/5'
-                      }`}
+                        }`}
                     >
                       {multiSelectMode && (
                         <div
@@ -1055,9 +1466,8 @@ export default function App() {
                             {paper.journal} &bull; {paper.year}
                           </div>
                           {paper.reviewStatus !== 'unreviewed' && (
-                            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                            }`}>
+                            <div className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                              }`}>
                               {paper.reviewStatus}
                             </div>
                           )}
@@ -1065,16 +1475,15 @@ export default function App() {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={(e) => { e.stopPropagation(); cycleStatus(paper.id, paper.reviewStatus); }}
-                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                              paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' :
-                              paper.reviewStatus === 'excluded' ? 'bg-red-100 text-red-600 hover:bg-red-200' :
-                              'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                            }`}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${paper.reviewStatus === 'included' ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' :
+                                paper.reviewStatus === 'excluded' ? 'bg-red-100 text-red-600 hover:bg-red-200' :
+                                  'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                              }`}
                             title={`Status: ${paper.reviewStatus}. Click to cycle.`}
                           >
                             {paper.reviewStatus === 'included' ? <Check className="w-4 h-4" /> :
-                             paper.reviewStatus === 'excluded' ? <Ban className="w-4 h-4" /> :
-                             <CircleDot className="w-4 h-4" />}
+                              paper.reviewStatus === 'excluded' ? <Ban className="w-4 h-4" /> :
+                                <CircleDot className="w-4 h-4" />}
                           </button>
                           {!multiSelectMode && (
                             <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
@@ -1104,7 +1513,7 @@ export default function App() {
                 })}
               </AnimatePresence>
             </div>
-            
+
             {filteredPapers.length === 0 && (
               <div className="text-center py-24 bg-white rounded-3xl border border-dashed border-slate-300">
                 <Search className="w-12 h-12 text-slate-300 mx-auto mb-4" />
@@ -1120,7 +1529,7 @@ export default function App() {
       <AnimatePresence>
         {selectedPaper && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-            <motion.div 
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -1142,7 +1551,7 @@ export default function App() {
                   </div>
                   <h2 className="text-2xl font-bold text-slate-900 pr-8">{selectedPaper.title}</h2>
                 </div>
-                <button 
+                <button
                   onClick={() => setSelectedPaper(null)}
                   className="p-2 hover:bg-slate-200 rounded-full transition-colors"
                 >
@@ -1322,9 +1731,8 @@ export default function App() {
                             <button
                               key={t.id}
                               onClick={() => { addThemeToPaper(selectedPaper.id, t.id); setThemeDropdownOpen(false); }}
-                              className={`w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors ${
-                                t.parentId ? 'pl-6' : ''
-                              }`}
+                              className={`w-full text-left px-3 py-2 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors ${t.parentId ? 'pl-6' : ''
+                                }`}
                             >
                               {t.parentId ? `\u21B3 ${t.name}` : t.name}
                             </button>
@@ -1492,20 +1900,21 @@ export default function App() {
                   {(['included', 'excluded', 'unreviewed'] as const).map(status => (
                     <button
                       key={status}
+                      disabled={isArchived}
                       onClick={() => {
+                        if (isArchived) return;
                         if (status === 'excluded') {
                           openExclusionDialog(selectedPaper.id);
                           return;
                         }
                         updatePaper(selectedPaper.id, { reviewStatus: status });
                       }}
-                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
-                        selectedPaper.reviewStatus === status
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${selectedPaper.reviewStatus === status
                           ? status === 'included' ? 'bg-emerald-100 text-emerald-700 border border-emerald-300'
                             : status === 'excluded' ? 'bg-red-100 text-red-700 border border-red-300'
-                            : 'bg-slate-200 text-slate-600 border border-slate-300'
+                              : 'bg-slate-200 text-slate-600 border border-slate-300'
                           : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-100'
-                      }`}
+                        }`}
                     >
                       {status === 'included' ? 'Included' : status === 'excluded' ? 'Excluded' : 'Unreviewed'}
                     </button>
@@ -1515,14 +1924,15 @@ export default function App() {
                   )}
                   <span className="mx-1 text-slate-300">|</span>
                   <button
-                    onClick={() => openScreeningDialog(selectedPaper.id)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors"
+                    disabled={isArchived}
+                    onClick={() => !isArchived && openScreeningDialog(selectedPaper.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed`}
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
                     Move Back to Screening
                   </button>
                 </div>
-                <button 
+                <button
                   onClick={() => setSelectedPaper(null)}
                   className="px-6 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors shadow-sm"
                 >
@@ -1558,11 +1968,10 @@ export default function App() {
                   <button
                     key={reason}
                     onClick={() => toggleReason(reason)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors border ${
-                      selectedReasons.has(reason)
+                    className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors border ${selectedReasons.has(reason)
                         ? 'bg-red-50 border-red-300 text-red-700 font-medium'
                         : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
+                      }`}
                   >
                     {reason}
                   </button>
@@ -1711,6 +2120,55 @@ export default function App() {
                     className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
                   >
                     Delete Theme
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* Tag Delete Confirmation Dialog */}
+      <AnimatePresence>
+        {pendingDeleteTagName && (() => {
+          const affectedCount = papers.filter(p => p.tags.includes(pendingDeleteTagName)).length;
+          return (
+            <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setPendingDeleteTagName(null)}
+                className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="relative bg-white w-full max-w-md rounded-2xl shadow-2xl p-6 space-y-4"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-red-100 rounded-full">
+                    <Trash2 className="w-5 h-5 text-red-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900">Delete Tag</h3>
+                </div>
+                <p className="text-sm text-slate-600">
+                  Delete tag <span className="font-semibold">"{pendingDeleteTagName}"</span> from all papers?
+                  This will remove it from {affectedCount} paper{affectedCount !== 1 ? 's' : ''}.
+                </p>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => setPendingDeleteTagName(null)}
+                    className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => deleteTag(pendingDeleteTagName)}
+                    className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition-colors"
+                  >
+                    Delete Tag
                   </button>
                 </div>
               </motion.div>
@@ -1875,171 +2333,169 @@ export default function App() {
             className="fixed inset-0 z-[80] bg-slate-900/20 backdrop-blur-sm"
           />
           <div
-            className={`fixed top-0 right-0 z-[90] h-full bg-white shadow-2xl flex flex-col transition-all duration-300 ${
-              chatPanelSize === "full" ? "w-full" : chatPanelSize === "expanded" ? "w-full max-w-2xl" : "w-full max-w-md"
-            }`}
+            className={`fixed top-0 right-0 z-[90] h-full bg-white shadow-2xl flex flex-col transition-all duration-300 ${chatPanelSize === "full" ? "w-full" : chatPanelSize === "expanded" ? "w-full max-w-2xl" : "w-full max-w-md"
+              }`}
           >
-              {/* Chat Header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-indigo-600" />
-                  <h2 className="text-sm font-bold text-slate-900">Research Chat</h2>
-                </div>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setChatPanelSize(prev => prev === "compact" ? "expanded" : prev === "expanded" ? "full" : "compact")}
-                    className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
-                    title={chatPanelSize === "compact" ? "Expand" : chatPanelSize === "expanded" ? "Full screen" : "Compact"}
-                  >
-                    {chatPanelSize === "full" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                  </button>
-                  <button
-                    onClick={() => setChatSettingsOpen(prev => !prev)}
-                    className={`p-1.5 rounded-lg transition-colors ${chatSettingsOpen ? "bg-indigo-100 text-indigo-600" : "text-slate-400 hover:bg-slate-200 hover:text-slate-600"}`}
-                    title="API Settings"
-                  >
-                    <Settings className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setChatOpen(false)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+            {/* Chat Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-indigo-600" />
+                <h2 className="text-sm font-bold text-slate-900">Research Chat</h2>
               </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setChatPanelSize(prev => prev === "compact" ? "expanded" : prev === "expanded" ? "full" : "compact")}
+                  className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
+                  title={chatPanelSize === "compact" ? "Expand" : chatPanelSize === "expanded" ? "Full screen" : "Compact"}
+                >
+                  {chatPanelSize === "full" ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </button>
+                <button
+                  onClick={() => setChatSettingsOpen(prev => !prev)}
+                  className={`p-1.5 rounded-lg transition-colors ${chatSettingsOpen ? "bg-indigo-100 text-indigo-600" : "text-slate-400 hover:bg-slate-200 hover:text-slate-600"}`}
+                  title="API Settings"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setChatOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
 
-              {/* Settings Panel */}
-              <AnimatePresence>
-                {chatSettingsOpen && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden border-b border-slate-200"
-                  >
-                    <div className="p-4 space-y-3 bg-slate-50">
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Base URL</label>
-                        <input
-                          type="text"
-                          value={chatConfig.baseUrl}
-                          onChange={e => {
-                            const next = { ...chatConfig, baseUrl: e.target.value };
-                            setChatConfig(next);
-                            saveChatConfig(next);
-                          }}
-                          className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                          placeholder="https://api.deepseek.com"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">API Key</label>
-                        <input
-                          type="password"
-                          value={chatConfig.apiKey}
-                          onChange={e => {
-                            const next = { ...chatConfig, apiKey: e.target.value };
-                            setChatConfig(next);
-                            saveChatConfig(next);
-                          }}
-                          className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                          placeholder="sk-..."
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Model</label>
-                        <input
-                          type="text"
-                          value={chatConfig.model}
-                          onChange={e => {
-                            const next = { ...chatConfig, model: e.target.value };
-                            setChatConfig(next);
-                            saveChatConfig(next);
-                          }}
-                          className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                          placeholder="deepseek-chat"
-                        />
-                      </div>
-                      <p className="text-[10px] text-slate-400 pt-1">Defaults from .env file. UI overrides are saved in localStorage.</p>
+            {/* Settings Panel */}
+            <AnimatePresence>
+              {chatSettingsOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden border-b border-slate-200"
+                >
+                  <div className="p-4 space-y-3 bg-slate-50">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Base URL</label>
+                      <input
+                        type="text"
+                        value={chatConfig.baseUrl}
+                        onChange={e => {
+                          const next = { ...chatConfig, baseUrl: e.target.value };
+                          setChatConfig(next);
+                          saveChatConfig(next);
+                        }}
+                        className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="https://api.deepseek.com"
+                      />
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Chat Messages */}
-              <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-                {chatMessages.length === 0 && (
-                  <div className="text-center py-8">
-                    <MessageSquare className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                    <p className="text-sm text-slate-500 mb-4">Ask about papers, themes, or tags</p>
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {[
-                        "Find papers about mental health",
-                        "What are the main themes?",
-                        "Suggest tags for my research",
-                      ].map((prompt) => (
-                        <button
-                          key={prompt}
-                          onClick={() => handleChatSend(prompt)}
-                          className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium hover:bg-indigo-100 transition-colors border border-indigo-200"
-                        >
-                          {prompt}
-                        </button>
-                      ))}
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={chatConfig.apiKey}
+                        onChange={e => {
+                          const next = { ...chatConfig, apiKey: e.target.value };
+                          setChatConfig(next);
+                          saveChatConfig(next);
+                        }}
+                        className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="sk-..."
+                      />
                     </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Model</label>
+                      <input
+                        type="text"
+                        value={chatConfig.model}
+                        onChange={e => {
+                          const next = { ...chatConfig, model: e.target.value };
+                          setChatConfig(next);
+                          saveChatConfig(next);
+                        }}
+                        className="w-full px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                        placeholder="deepseek-chat"
+                      />
+                    </div>
+                    <p className="text-[10px] text-slate-400 pt-1">Defaults from .env file. UI overrides are saved in localStorage.</p>
                   </div>
-                )}
-                {chatMessages.map((msg, i) => (
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+              {chatMessages.length === 0 && (
+                <div className="text-center py-8">
+                  <MessageSquare className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                  <p className="text-sm text-slate-500 mb-4">Ask about papers, themes, or tags</p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {[
+                      "Find papers about mental health",
+                      "What are the main themes?",
+                      "Suggest tags for my research",
+                    ].map((prompt) => (
+                      <button
+                        key={prompt}
+                        onClick={() => handleChatSend(prompt)}
+                        className="px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-medium hover:bg-indigo-100 transition-colors border border-indigo-200"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {chatMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
                   <div
-                    key={i}
-                    className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                        msg.role === "user"
-                          ? "bg-indigo-600 text-white"
-                          : msg.content.startsWith("Error:")
-                            ? "bg-red-50 text-red-700 border border-red-200"
-                            : "bg-slate-100 text-slate-800"
+                    className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${msg.role === "user"
+                        ? "bg-indigo-600 text-white"
+                        : msg.content.startsWith("Error:")
+                          ? "bg-red-50 text-red-700 border border-red-200"
+                          : "bg-slate-100 text-slate-800"
                       }`}
-                    >
-                      {msg.role === "assistant" ? renderAssistantContent(msg.content) : msg.content}
-                      {msg.role === "assistant" && !msg.content && isStreaming && (
-                        <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
-                      )}
-                    </div>
-                  </div>
-                ))}
-                <div ref={chatMessagesEndRef} />
-              </div>
-
-              {/* Chat Input */}
-              <div className="p-3 border-t border-slate-200 bg-white">
-                <div className="flex items-end gap-2">
-                  <textarea
-                    value={chatInput}
-                    onChange={e => setChatInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleChatSend(chatInput);
-                      }
-                    }}
-                    placeholder="Ask about papers..."
-                    disabled={isStreaming}
-                    rows={1}
-                    className="flex-1 resize-none px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <button
-                    onClick={() => handleChatSend(chatInput)}
-                    disabled={isStreaming || !chatInput.trim()}
-                    className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                   >
-                    <Send className="w-4 h-4" />
-                  </button>
+                    {msg.role === "assistant" ? renderAssistantContent(msg.content) : msg.content}
+                    {msg.role === "assistant" && !msg.content && isStreaming && (
+                      <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                    )}
+                  </div>
                 </div>
+              ))}
+              <div ref={chatMessagesEndRef} />
+            </div>
+
+            {/* Chat Input */}
+            <div className="p-3 border-t border-slate-200 bg-white">
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleChatSend(chatInput);
+                    }
+                  }}
+                  placeholder="Ask about papers..."
+                  disabled={isStreaming}
+                  rows={1}
+                  className="flex-1 resize-none px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <button
+                  onClick={() => handleChatSend(chatInput)}
+                  disabled={isStreaming || !chatInput.trim()}
+                  className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
               </div>
+            </div>
           </div>
         </>
       )}

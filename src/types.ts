@@ -1,5 +1,14 @@
 export type ReviewStatus = "included" | "excluded" | "unreviewed";
 
+export interface ResearchProject {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  archived: boolean;
+  lastOpened: string | null;
+}
+
 export interface ChatConfig {
   baseUrl: string;
   apiKey: string;
