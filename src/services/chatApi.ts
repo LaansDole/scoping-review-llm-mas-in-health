@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { Paper, Theme, ChatConfig, ChatMessage } from "./types";
+import type { Paper, Theme, ChatConfig, ChatMessage } from "../types";
 
 const CHAT_CONFIG_KEY = "mas-health-chat-config";
 
@@ -18,9 +18,9 @@ export function loadChatConfig(): ChatConfig {
     if (saved) {
       const parsed = JSON.parse(saved);
       return {
-        baseUrl: parsed.baseUrl || envDefaults.baseUrl,
-        apiKey: parsed.apiKey || envDefaults.apiKey,
-        model: parsed.model || envDefaults.model,
+        baseUrl: parsed.baseUrl ?? envDefaults.baseUrl,
+        apiKey: parsed.apiKey ?? envDefaults.apiKey,
+        model: parsed.model ?? envDefaults.model,
       };
     }
   } catch {}

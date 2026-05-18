@@ -1,4 +1,4 @@
-import type { ResearchProject } from './types';
+import type { ResearchProject } from '../types';
 
 const PROJECT_INDEX_KEY = 'mas-health-projects';
 const LEGACY_KEYS = {

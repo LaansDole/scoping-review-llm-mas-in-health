@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import type { Paper, Theme } from './types';
+import type { Paper, Theme } from '../types';
 
 export function exportPapersAsCsv(papers: Paper[], themes: Theme[]): void {
   const themeMap = new Map(themes.map(t => [t.id, t.name]));
